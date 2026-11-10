@@ -162,7 +162,7 @@ def test_destroy_deletes_vm_and_state(tmp_path: Path) -> None:
     env["VM_STATUS"] = "stopped"
     state = tmp_path / "state" / "t1"
     state.mkdir(parents=True)
-    res = _zsh("vm-destroy.sh", "t1", env=env)
+    res = _zsh("vm-destroy.sh", "--keep-license", "t1", env=env)
     assert res.returncode == 0, res.stderr
     assert "utmctl delete t1" in log.read_text()
     assert "utmctl stop" not in log.read_text()  # already stopped

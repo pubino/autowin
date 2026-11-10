@@ -148,3 +148,12 @@ Each of these cost a debugging session. Most now have a regression test in this 
     Read with `-Encoding Unicode`, print only chosen fields, and replace errors with a short
     message. A Microsoft 365 activation shows as `LicenseType = Subscription`,
     `Status = Provisioned`.
+
+34. **`utmctl clone` copies the configuration as is.** The clone kept the source's QEMU monitor
+    socket (`unix:SOURCE.mon`) and MAC address, so source and clone collide when both run.
+    `vm-clone.sh` gives the clone its own of each and reloads UTM's configuration.
+
+35. **A clone shares its source's Office activation.** Releasing the license in one (sign-out)
+    can sign out the others, so `vm-destroy.sh` releases only for a VM without clones and that
+    is not a clone (lineage is in `AUTOWIN_STATE/NAME/clone-of`). A local release does not prove
+    that Microsoft has freed the device slot; the account's device list does.

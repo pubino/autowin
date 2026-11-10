@@ -10,7 +10,9 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 | Path | What |
 | --- | --- |
 | [`examples/zsh/vm-create.sh`](examples/zsh/vm-create.sh) | Create, install, log in, install guest tools, wait until ready. |
-| [`examples/zsh/vm-destroy.sh`](examples/zsh/vm-destroy.sh) | Delete the VM and its local state. |
+| [`examples/zsh/vm-destroy.sh`](examples/zsh/vm-destroy.sh) | Release the VM's Microsoft 365 license, then delete the VM and its local state. |
+| [`examples/zsh/vm-clone.sh`](examples/zsh/vm-clone.sh) | Clone a stopped VM with its own monitor socket and MAC address; records lineage. |
+| [`examples/guest/release-office.ps1`](examples/guest/release-office.ps1) | The guest side of the license release (Microsoft's reset-activation steps). |
 | [`examples/zsh/vm-ps.sh`](examples/zsh/vm-ps.sh) | Run PowerShell in the guest and print its output (exit 1 if it threw). |
 | [`examples/zsh/vm-office.sh`](examples/zsh/vm-office.sh) | Install Microsoft 365 Apps with only the apps named (e.g. Access); activation is a sign-in. |
 | [`examples/guest/install-office.ps1`](examples/guest/install-office.ps1) | The guest side: Office Deployment Tool (signature-checked), silent install, marker files. |
@@ -76,6 +78,18 @@ HTTPS in 18 s, see gotcha 31), and installing from the local source about 1 minu
 does not activate), a local administrator (`AUTOWIN_USER`, random password in
 `AUTOWIN_STATE/NAME/password`) with automatic logon, no online-account screens, a virtual
 TPM, and the UTM guest tools. Settings are in [`example.env`](example.env).
+
+**Licenses, clones and teardown:** activate Office once in a VM (sign in), stop it, and
+`vm-clone.sh` it into a base; work in further clones of that base. A clone shares its source's
+Windows and Office device identity, so:
+
+- `vm-destroy.sh NAME` releases the Microsoft 365 license inside Windows before deleting the VM
+  (account sign-out from the Web Account Manager, cached licenses and identities removed, then
+  checked). It starts a stopped VM for this. If the release fails, nothing is deleted.
+- It keeps the license for a clone, and for a VM that has clones, because releasing it would
+  sign the others out too. `--release-license` and `--keep-license` override this.
+- A local release removes the license from the VM. Microsoft's account device list is the
+  authoritative record: check it after deleting the last VM that held a license.
 
 **Sensitive data:** take a snapshot of the clean, set-up VM, then run sessions that handle
 data with `utmctl start --disposable`, so nothing is written to the VM's disk.

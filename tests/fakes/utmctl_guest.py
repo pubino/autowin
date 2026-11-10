@@ -28,7 +28,18 @@ def main(argv: list[str]) -> int:
         fh.write(" ".join(argv) + "\n")
     args = [a for a in argv if a != "--hide"]
     if args[0] == "status":
-        print("started")
+        status_file = store / "_status"
+        print(
+            status_file.read_text()
+            if status_file.exists()
+            else os.environ.get("FAKE_STATUS", "started")
+        )
+        return 0
+    if args[0] in ("start", "stop"):
+        (store / "_status").write_text("started" if args[0] == "start" else "stopped")
+        return 0
+    if args[0] == "delete":
+        (store / "_status").write_text("deleted")
         return 0
     if args[:2] == ["file", "push"]:
         data = sys.stdin.buffer.read()
@@ -61,10 +72,19 @@ def main(argv: list[str]) -> int:
             fin = re.search(r"-Path '([^']+\.done)'", code)
             assert out and fin, code
             failed = "throw" in code
-            host(out.group(1)).write_bytes(
-                b"\xef\xbb\xbf" + (b"ERROR: thrown\r\n" if failed else b"guest says hi\r\n")
-            )
+            if "AUTOWIN_COUNT_LICENSES" in code:
+                body = os.environ.get("FAKE_LICENSES", "1").encode() + b"\r\n"
+            else:
+                body = b"ERROR: thrown\r\n" if failed else b"guest says hi\r\n"
+            host(out.group(1)).write_bytes(b"\xef\xbb\xbf" + body)
             host(fin.group(1)).write_text("1" if failed else "0")
+        elif "-File" in cmd and cmd[cmd.index("-File") + 1].endswith("release-office.ps1"):
+            if os.environ.get("FAKE_RELEASE_FAIL"):
+                host(r"C:\autowin-license.failed").write_text("the account sign-out did not run")
+            else:
+                host(r"C:\autowin-license.released").write_text(
+                    "2026-11-10T17:00:00.0000000-05:00\r\naccounts signed out: 1\r\nlicense files removed: 1"
+                )
         elif "-File" in cmd and cmd[cmd.index("-File") + 1].endswith("install-office.ps1"):
             apps = cmd[cmd.index("-Apps") + 1]
             host(r"C:\autowin-office.args").write_text(apps)
