@@ -66,7 +66,11 @@ about 70 GB free.
 | --- | --- |
 | Start to Windows Setup writing to disk | 4m 09s (about 3 min of it recovering a missed boot prompt; since fixed) |
 | Setup, restarts, first logon, guest tools | 6m 30s |
-| **Total, ISO to logged-in VM that answers `utmctl exec`** | **10m 39s**, unattended |
+| **Total, ISO to logged-in VM that answers `utmctl exec`** | **10m 39s** (first run); **7m 25s** after the boot-prompt fix |
+
+Installing Access (`vm-office.sh --apps Access`, same day): downloading Office's 2.8 GB source
+took about 9 minutes (roughly 5 MB/s through Delivery Optimization; the 467 MB ARM64 package over
+HTTPS in 18 s, see gotcha 31), and installing from the local source about 1 minute.
 
 **What the VM gets:** Windows 11 Pro installed with Microsoft's generic KMS client key (it
 does not activate), a local administrator (`AUTOWIN_USER`, random password in

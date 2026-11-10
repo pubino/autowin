@@ -131,3 +131,14 @@ Each of these cost a debugging session. Most now have a regression test in this 
 30. **Windows Update starts large downloads in a fresh VM.** A 4.3 GB update ran alongside
     Office's download. `install-office.ps1` pauses automatic updates for the install and
     restores the setting afterwards; updates belong in their own step.
+
+31. **Microsoft's CDN served Office's ARM64 package only over HTTPS.** On 2026-11-10, plain-HTTP
+    requests for `stream.x64.x-none.arm64x.dat` got 503 or empty 206 replies on every edge and
+    channel tried, so the Office Deployment Tool (which uses HTTP) and Delivery Optimization
+    waited on it forever; that was the "0 MB" stall in 25 and 29. Over HTTPS it downloaded at
+    about 27 MB/s. `install-office.ps1` fetches it over HTTPS and checks both stream files
+    against the sizes the CDN reports. Check with `curl -r 0-8388607` over http and https.
+
+32. **GUI programs must run in the user's session.** `utmctl exec` runs as SYSTEM in session 0,
+    so a window would never appear. Register a scheduled task with an `Interactive` principal for
+    the logged-on user and start it (no password needed); the program runs on the desktop.

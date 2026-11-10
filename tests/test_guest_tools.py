@@ -134,3 +134,16 @@ def test_office_install_pauses_windows_update_and_restores_it() -> None:
     assert pause < ps1.index("'/download'")
     finally_block = ps1[ps1.index("finally {") :]
     assert "NoAutoUpdate" in finally_block  # restored even when the install fails
+
+
+def test_office_fetches_the_arm64x_package_over_https() -> None:
+    # Regression (2026-11-10): over plain HTTP, Microsoft's CDN answered the ARM64 package
+    # (stream.x64.x-none.arm64x.dat) with 503 or empty 206 replies on every edge tried, so the
+    # Office downloader, which uses HTTP, waited forever. Over HTTPS it downloaded at once.
+    ps1 = (ROOT / "examples/guest/install-office.ps1").read_text()
+    assert "stream.x64.x-none.arm64x.dat" in ps1
+    assert "https://officecdn.microsoft.com/pr/" in ps1
+    fetch = ps1.index("curl.exe")
+    assert ps1.index("'/download'") < fetch < ps1.index("'/configure'")
+    # complete means the sizes the CDN reports, not just that files exist
+    assert "Content-Length" in ps1

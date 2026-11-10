@@ -64,9 +64,56 @@ $exclude
 </Configuration>
 "@ | Set-Content -Path $config -Encoding UTF8
 
-    $p = Start-Process -FilePath $setup -ArgumentList '/download', $config -WorkingDirectory $work -Wait -PassThru
-    Write-Output "Office Deployment Tool /download exit code: $($p.ExitCode)"
-    if ($p.ExitCode -ne 0) { throw "Office download failed with exit code $($p.ExitCode)" }
+    # Over plain HTTP, which the Office Deployment Tool uses, Microsoft's CDN answered the ARM64
+    # package (stream.x64.x-none.arm64x.dat) with 503 or empty replies (2026-11-10), and /download
+    # waited forever. Over HTTPS it downloads at once. So: run /download, fetch the two stream files'
+    # sizes over HTTPS, fetch the ARM64 package over HTTPS ourselves, and treat the source as
+    # complete when both streams have the sizes the CDN reports. If /download finishes on its own,
+    # nothing else is needed.
+    $channels = @{ Current = '492350f6-3a01-4f97-b9c0-c7c6ddf67d60'; MonthlyEnterprise = '55336b82-a18d-4dd6-b5f6-9e5095c314a6';
+                   SemiAnnual = '7ffbc6bf-bc32-4f92-8982-f9dd17fd3114' }
+    if (-not $channels.ContainsKey($Channel)) { throw "unknown channel for the HTTPS fetch: $Channel" }
+    $cdn = "https://officecdn.microsoft.com/pr/$($channels[$Channel])/Office/Data"
+    $dl = Start-Process -FilePath $setup -ArgumentList '/download', $config -WorkingDirectory $work -PassThru
+    $data = Join-Path $source 'Office\Data'
+    $deadline = (Get-Date).AddMinutes(60)
+    $expected = $null
+    $arm = $null
+    while ($true) {
+        if ($dl.HasExited) { break }
+        $verDir = Get-ChildItem $data -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($verDir -and -not $expected) {
+            $expected = @{}
+            foreach ($f in 'stream.x64.x-none.dat', 'stream.x64.x-none.arm64x.dat') {
+                $head = Invoke-WebRequest -UseBasicParsing -Method Head -Uri "$cdn/$($verDir.Name)/$f"
+                $expected[$f] = [long]$head.Headers['Content-Length']
+            }
+            Write-Output ("build {0}: expecting {1}" -f $verDir.Name, (($expected.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '))
+        }
+        if ($verDir -and -not $arm) {
+            $arm = Join-Path $verDir.FullName 'stream.x64.x-none.arm64x.dat'
+            & curl.exe --silent --show-error --fail --retry 3 -o "$arm.part" "$cdn/$($verDir.Name)/stream.x64.x-none.arm64x.dat"
+            if ($LASTEXITCODE -ne 0) { throw "HTTPS fetch of the ARM64 package failed (curl.exe exit $LASTEXITCODE)" }
+            Move-Item -Force "$arm.part" $arm
+            Write-Output "fetched the ARM64 package over HTTPS"
+        }
+        if ($expected) {
+            $complete = $true
+            foreach ($f in $expected.Keys) {
+                $have = Get-Item (Join-Path $verDir.FullName $f) -ErrorAction SilentlyContinue
+                if (-not $have -or $have.Length -ne $expected[$f]) { $complete = $false }
+            }
+            if ($complete) {
+                Write-Output "source complete; stopping /download if it is still waiting"
+                Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'setup.exe' -and $_.CommandLine -match '/download' } |
+                    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+                break
+            }
+        }
+        if ((Get-Date) -gt $deadline) { throw "Office download did not complete within 60 minutes" }
+        Start-Sleep -Seconds 15
+    }
+    if ($dl.HasExited -and -not $complete -and $dl.ExitCode -ne 0) { throw "Office download failed with exit code $($dl.ExitCode)" }
     $cabs = @(Get-ChildItem (Join-Path $source 'Office\Data') -Recurse -Filter *.cab -ErrorAction SilentlyContinue)
     $mb = (Get-ChildItem $source -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
     if ($cabs.Count -eq 0 -or $mb -lt 500) { throw ("Office download is incomplete ({0:N0} MB, {1} cab files)" -f $mb, $cabs.Count) }

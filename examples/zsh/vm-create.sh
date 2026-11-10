@@ -198,7 +198,7 @@ pull() {  # pull GUEST_PATH: the file's contents on stdout, empty if unavailable
 probe() { [[ "$(pull 'C:\autowin-setup.done')" =~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' ]]; }
 failed() { [[ -n "$(pull 'C:\autowin-setup.failed')" ]]; }
 deadline=$(( SECONDS + timeout * 60 ))
-say "installing Windows; this usually takes 20-30 minutes (watch it in the UTM window)"
+say "installing Windows; this takes about 8 minutes (watch it in the UTM window)"
 until probe; do
   (( SECONDS < deadline )) || die "timed out after $timeout min; check the VM window"
   if failed; then die "first-logon setup failed; see C:\\autowin-setup.log in the VM"; fi
