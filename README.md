@@ -11,6 +11,9 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 | --- | --- |
 | [`examples/zsh/vm-create.sh`](examples/zsh/vm-create.sh) | Create, install, log in, install guest tools, wait until ready. |
 | [`examples/zsh/vm-destroy.sh`](examples/zsh/vm-destroy.sh) | Delete the VM and its local state. |
+| [`examples/zsh/vm-ps.sh`](examples/zsh/vm-ps.sh) | Run PowerShell in the guest and print its output (exit 1 if it threw). |
+| [`examples/zsh/vm-office.sh`](examples/zsh/vm-office.sh) | Install Microsoft 365 Apps with only the apps named (e.g. Access); activation is a sign-in. |
+| [`examples/guest/install-office.ps1`](examples/guest/install-office.ps1) | The guest side: Office Deployment Tool (signature-checked), silent install, marker files. |
 | [`examples/zsh/vm-keys.sh`](examples/zsh/vm-keys.sh) | Type into the VM through its QEMU monitor (UTM's AppleScript keystrokes never arrive). |
 | [`examples/zsh/vm-screen.sh`](examples/zsh/vm-screen.sh) | Save a PNG screenshot of the VM's display. |
 | [`examples/zsh/monitor.zsh`](examples/zsh/monitor.zsh) | Shared QEMU monitor helpers. |
@@ -41,8 +44,9 @@ about 70 GB free.
 3. Use it:
 
    ```zsh
-   utmctl exec autowin --cmd cmd.exe /c ver
+   examples/zsh/vm-ps.sh autowin 'Get-ComputerInfo | Select-Object OsName, OsArchitecture'
    utmctl file push autowin 'C:\Users\tester\in.txt' < in.txt
+   examples/zsh/vm-office.sh --apps Access autowin   # then sign in once in the VM window
    ```
 
    Look at it or type into it from the host, for example to get past a screen the
@@ -54,6 +58,15 @@ about 70 GB free.
    ```
 
 4. Throw it away: `examples/zsh/vm-destroy.sh autowin`.
+
+**Build time** (measured 2026-11-10 on an Apple M-series Mac with 128 GB RAM: UTM 5.0.8, Windows 11
+24H2 Arm64 build 26100.4349, default 8 GB / 4 CPUs / 64 GB; `vm-create.sh` prints its own time):
+
+| Step | Elapsed |
+| --- | --- |
+| Start to Windows Setup writing to disk | 4m 09s (about 3 min of it recovering a missed boot prompt; since fixed) |
+| Setup, restarts, first logon, guest tools | 6m 30s |
+| **Total, ISO to logged-in VM that answers `utmctl exec`** | **10m 39s**, unattended |
 
 **What the VM gets:** Windows 11 Pro installed with Microsoft's generic KMS client key (it
 does not activate), a local administrator (`AUTOWIN_USER`, random password in

@@ -229,7 +229,9 @@ def test_create_drives_the_boot_through_the_qemu_monitor() -> None:
     create = (ZSH_DIR / "vm-create.sh").read_text()
     assert "input keystroke" not in create and "startup.nsh" not in create
     assert "-monitor" in create and "unix:$name.mon,server=on,wait=off" in create
-    assert '--any-key 20 "$name"' in create
+    # Regression: a 20 s burst right after start ended before the prompt appeared (end-to-end run,
+    # 2026-11-10); recovery from Shell> then cost about 3 minutes.
+    assert '--any-key 45 "$name"' in create
     assert r"fs0:\efi\boot\bootaa64.efi" in create
     assert not (GUEST / "startup.nsh").exists()
 
@@ -271,3 +273,19 @@ def test_create_leaves_the_tpm_off() -> None:
     create = (ZSH_DIR / "vm-create.sh").read_text()
     assert "TPMDevice true" not in create
     assert "BypassTPMCheck" in (GUEST / "autounattend.xml").read_text()
+
+
+def test_create_reports_its_build_time() -> None:
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    assert "begin=$SECONDS" in create
+    assert 'say "ready: $name is logged in as $VM_USER and answers utmctl exec (built in' in create
+
+
+@pytest.mark.parametrize("script", ["vm-create.sh", "vm-office.sh", "vm-destroy.sh"])
+def test_message_helpers_print_raw(script: str) -> None:
+    # print without -r interprets backslash escapes, mangling Windows paths in messages.
+    text = (ZSH_DIR / script).read_text()
+    for helper in ("die()", "say()"):
+        if helper in text:
+            line = next(ln for ln in text.splitlines() if ln.startswith(helper))
+            assert "print -r" in line or "print -ru2" in line, line

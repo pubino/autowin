@@ -21,8 +21,8 @@ PLISTBUDDY=${PLISTBUDDY:-/usr/libexec/PlistBuddy}
 VM_USER=${AUTOWIN_USER:-tester}
 
 name=${AUTOWIN_NAME:-autowin} memory=${AUTOWIN_MEMORY:-8192} cpus=${AUTOWIN_CPUS:-4} disk=${AUTOWIN_DISK_GB:-64} timeout=${AUTOWIN_TIMEOUT_MIN:-90} dry=0 iso=""
-die() { print -u2 -- "vm-create: $*"; exit 1; }
-say() { print -- "vm-create: $*"; }
+die() { print -ru2 -- "vm-create: $*"; exit 1; }  # -r: Windows paths have backslashes
+say() { print -r -- "vm-create: $*"; }
 run() { if (( dry )); then print -- "+ ${(q-)@}"; else "$@"; fi; }
 
 while (( $# )); do
@@ -80,6 +80,7 @@ exists=0
 "$UTMCTL" status "$name" >/dev/null 2>&1 && exists=1
 
 # --- create ----------------------------------------------------------------------------------
+begin=$SECONDS
 if (( ! exists )); then
   say "creating VM $name (${memory} MiB, $cpus CPUs, $disk GiB disk)"
   run mkdir -p "$state"
@@ -163,7 +164,9 @@ APPLESCRIPT
     # Never send keys once it has: Space would press Setup's focused Cancel button.
     qcow=("$bundle"/Data/*.qcow2(N))
     disk_mb() { print -- $(( $(du -k "$qcow[1]" | cut -f1) / 1024 )); }
-    "$here/vm-keys.sh" --any-key 20 "$name"
+    # The prompt appears some seconds after start (the firmware tries the CD first); 20 s was too
+    # short. Setup itself only appears well after 45 s, so the burst cannot reach its Cancel button.
+    "$here/vm-keys.sh" --any-key 45 "$name"
     started=0
     for attempt in 1 2 3; do
       for _ in {1..36}; do
@@ -173,7 +176,7 @@ APPLESCRIPT
       (( started )) && break
       say "Setup has not started (attempt $attempt); starting the CD's boot loader from the firmware shell"
       "$here/vm-keys.sh" "$name" 'fs0:\efi\boot\bootaa64.efi'
-      "$here/vm-keys.sh" --any-key 20 "$name"
+      "$here/vm-keys.sh" --any-key 45 "$name"
     done
     (( started )) || die "Windows Setup did not start; look with: $here/vm-screen.sh $name screen.png"
   fi
@@ -201,5 +204,6 @@ until probe; do
   if failed; then die "first-logon setup failed; see C:\\autowin-setup.log in the VM"; fi
   sleep 30
 done
-say "ready: $name is logged in as $VM_USER and answers utmctl exec"
+elapsed=$(( SECONDS - begin ))
+say "ready: $name is logged in as $VM_USER and answers utmctl exec (built in $(( elapsed / 60 ))m $(( elapsed % 60 ))s)"
 say "password: $state/password"

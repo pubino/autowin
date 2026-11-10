@@ -88,3 +88,31 @@ Each of these cost a debugging session. Most now have a regression test in this 
 
 20. **Do not edit a zsh script while it runs.** zsh reads scripts as it goes; a run that was
     waiting while its file changed failed at the end with `unmatched "`.
+
+21. **Quotes do not survive `utmctl exec … --cmd cmd.exe /c "…"`.** `start "" /b powershell …`
+    and `tasklist /fi "…"` silently did nothing. Run programs directly (`--cmd powershell.exe
+    -File …`), and send PowerShell code Base64-encoded with `-EncodedCommand` (`vm-ps.sh`).
+    In zsh, quote Windows paths: unquoted `C:\dir` becomes `C:dir`.
+
+22. **`utmctl exec` returns at once; the command runs on in the guest.** Reading its output
+    file right away finds nothing. Wait for a file the command writes last (`vm-ps.sh`
+    waits for a `.done` file), and wait for deletions to take effect too.
+
+23. **A PowerShell transcript locks its log file.** `utmctl file pull` cannot read
+    `Start-Transcript`'s file while the script runs; check progress through processes and
+    files instead (`vm-ps.sh`).
+
+24. **With `-File`, `-Apps Access,Excel` arrives as one string.** PowerShell parses the
+    comma list only for `-Command`; split it in the script.
+
+25. **Office's download can sit at 0 MB in Delivery Optimization.** Office (Click-to-Run)
+    downloads through Windows' Delivery Optimization; in its default LAN-peering mode the
+    main package never started. `install-office.ps1` sets the HTTP-only policy
+    (`DODownloadMode=0`) and restarts `DoSvc` before installing.
+
+26. **An Office install that was killed cannot simply be rerun.** The next attempt failed with
+    17002 ("Orchestration failed to initialize", error 88). On a throwaway VM, rebuild it
+    (`vm-destroy.sh`, `vm-create.sh`); that takes minutes.
+
+27. **zsh's `print` interprets backslash escapes.** `print "C:\\autowin.log"` prints
+    `C:` + BEL + `utowin.log`. Use `print -r` for anything that may hold a Windows path.
