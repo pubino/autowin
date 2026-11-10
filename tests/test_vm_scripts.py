@@ -1,0 +1,182 @@
+"""The zsh scripts and guest files, run for real against fake hdiutil/uname/utmctl/osascript."""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+ZSH_DIR = ROOT / "examples" / "zsh"
+GUEST = ROOT / "examples" / "guest"
+NS = {"u": "urn:schemas-microsoft-com:unattend"}
+ZSH = shutil.which("zsh")
+
+
+def test_answer_file_is_complete_and_arm64_only() -> None:
+    text = (GUEST / "autounattend.xml").read_text()
+    root = ET.fromstring(text)  # well-formed
+    comps = root.findall(".//u:component", NS)
+    assert comps and {c.get("processorArchitecture") for c in comps} == {"arm64"}
+    passes = {s.get("pass") for s in root.findall("u:settings", NS)}
+    assert {"windowsPE", "specialize", "oobeSystem"} <= passes
+    for needle in (
+        "BypassTPMCheck",
+        "BypassSecureBootCheck",
+        "<WillWipeDisk>true</WillWipeDisk>",
+        "<WillShowUI>Never</WillShowUI>",
+        "<AcceptEula>true</AcceptEula>",
+        "<HideOnlineAccountScreens>true</HideOnlineAccountScreens>",
+        "setup-guest.ps1",
+    ):
+        assert needle in text, needle
+    account = root.find(".//u:LocalAccount", NS)
+    logon = root.find(".//u:AutoLogon", NS)
+    assert account is not None and logon is not None
+    assert (
+        account.findtext("u:Name", namespaces=NS)
+        == logon.findtext("u:Username", namespaces=NS)
+        == "@@USER@@"
+    )
+    assert account.findtext("u:Group", namespaces=NS) == "Administrators"
+    for el in (account, logon):
+        assert el.findtext("u:Password/u:Value", namespaces=NS) == "@@PASSWORD@@"
+    assert logon.findtext("u:Enabled", namespaces=NS) == "true"
+    assert root.findtext(".//u:ComputerName", namespaces=NS) == "@@COMPUTER@@"
+    image = root.find(".//u:InstallFrom/u:MetaData/u:Value", NS)
+    assert image is not None and image.text == "Windows 11 Pro"
+
+
+def _stubs(tmp_path: Path, *, arm64_iso: bool = True) -> tuple[dict[str, str], Path]:
+    bin_dir, log = tmp_path / "bin", tmp_path / "calls.log"
+    bin_dir.mkdir()
+    files = 'mkdir -p "$m/sources"; : > "$m/sources/install.wim"'
+    if arm64_iso:
+        files += '; mkdir -p "$m/efi/boot"; : > "$m/efi/boot/bootaa64.efi"'
+    stubs = {
+        "uname": "echo arm64",
+        # hdiutil attach ... -mountpoint M IMAGE: fake the ISO contents in M
+        "hdiutil": f'echo "hdiutil $*" >> {log}; if [ "$1" = attach ]; then '
+        'while [ $# -gt 0 ]; do [ "$1" = -mountpoint ] && m=$2; shift; done; ' + files + "; fi",
+        "osascript": f'echo "osascript $*" >> {log}',
+        "utmctl": f'echo "utmctl $*" >> {log}; '
+        '[ "$1" = status ] && [ -n "$VM_STATUS" ] && echo "$VM_STATUS" && exit 0; '
+        '[ "$1" = status ] && exit 1; exit 0',
+    }
+    for name, body in stubs.items():
+        (bin_dir / name).write_text(f"#!/bin/sh\n{body}\n")
+        (bin_dir / name).chmod(0o755)
+    (tmp_path / "tools.iso").write_bytes(b"guest tools")
+    (tmp_path / "win.iso").write_bytes(b"windows")
+    env = {
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "HOME": str(tmp_path),
+        "TMPDIR": str(tmp_path),
+        "UTMCTL": str(bin_dir / "utmctl"),
+        "GUEST_TOOLS": str(tmp_path / "tools.iso"),
+        "AUTOWIN_STATE": str(tmp_path / "state"),
+        "UTM_DOCS": str(tmp_path / "docs"),
+    }
+    return env, log
+
+
+def _zsh(script: str, *args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    assert ZSH is not None, "zsh is required for these tests"
+    return subprocess.run(
+        [ZSH, "-f", str(ZSH_DIR / script), *args], capture_output=True, text=True, env=env
+    )
+
+
+def test_create_dry_run_changes_nothing(tmp_path: Path) -> None:
+    env, log = _stubs(tmp_path)
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "+ mkdir -p" in res.stdout and "make QEMU aarch64 VM t1" in res.stdout
+    assert not (tmp_path / "state").exists()
+    calls = log.read_text()
+    assert "osascript" not in calls and "makehybrid" not in calls
+    assert "utmctl start" not in calls
+    assert (
+        calls.count("hdiutil attach") == calls.count("hdiutil detach") == 1
+    )  # the Windows ISO, read-only
+    assert "-readonly" in calls
+
+
+def test_create_refuses_an_iso_that_is_not_arm64(tmp_path: Path) -> None:
+    env, log = _stubs(tmp_path, arm64_iso=False)
+    res = _zsh("vm-create.sh", "--dry-run", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode != 0
+    assert "not an Arm64 Windows ISO" in res.stderr
+    assert "hdiutil detach" in log.read_text()  # unmounted on the way out
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--name", "bad name"], "--name may use"),
+        (["--memory", "lots"], "--memory must be a number"),
+        (["--disk", "10"], "--disk must be at least 40"),
+        ([], "Windows ISO not found"),
+    ],
+)
+def test_create_validates_arguments(tmp_path: Path, args: list[str], message: str) -> None:
+    env, _ = _stubs(tmp_path)
+    iso = [str(tmp_path / "win.iso")] if args else []
+    res = _zsh("vm-create.sh", "--dry-run", *args, *iso, env=env)
+    assert res.returncode != 0
+    assert message in res.stderr
+
+
+def test_create_waits_for_an_existing_vm_instead_of_making_another(tmp_path: Path) -> None:
+    env, log = _stubs(tmp_path)
+    env["VM_STATUS"] = "stopped"
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "already exists" in res.stdout
+    assert "start t1" in res.stdout  # would start it (dry run prints)
+    assert "make QEMU" not in res.stdout
+    assert "osascript" not in log.read_text()
+
+
+def test_destroy_dry_run_prints_and_keeps_everything(tmp_path: Path) -> None:
+    env, log = _stubs(tmp_path)
+    env["VM_STATUS"] = "started"
+    state = tmp_path / "state" / "t1"
+    state.mkdir(parents=True)
+    res = _zsh("vm-destroy.sh", "--dry-run", "t1", env=env)
+    assert res.returncode == 0, res.stderr
+    assert "stop --kill t1" in res.stdout and "delete t1" in res.stdout and "rm -rf" in res.stdout
+    assert state.exists()
+    assert "utmctl delete" not in log.read_text() and "utmctl stop" not in log.read_text()
+
+
+def test_destroy_deletes_vm_and_state(tmp_path: Path) -> None:
+    env, log = _stubs(tmp_path)
+    env["VM_STATUS"] = "stopped"
+    state = tmp_path / "state" / "t1"
+    state.mkdir(parents=True)
+    res = _zsh("vm-destroy.sh", "t1", env=env)
+    assert res.returncode == 0, res.stderr
+    assert "utmctl delete t1" in log.read_text()
+    assert "utmctl stop" not in log.read_text()  # already stopped
+    assert not state.exists()
+
+
+def test_host_waits_for_the_markers_the_guest_writes() -> None:
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    guest = (GUEST / "setup-guest.ps1").read_text()
+    for marker in ("C:\\autowin-setup.done", "C:\\autowin-setup.failed"):
+        assert marker in create, marker
+        assert f"'{marker}'" in guest, marker
+
+
+def test_first_logon_runs_the_script_that_goes_on_the_disc() -> None:
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    answer = (GUEST / "autounattend.xml").read_text()
+    assert 'cp "$guest/setup-guest.ps1" "$staging/disc/setup-guest.ps1"' in create
+    assert r"if exist %d:\setup-guest.ps1" in answer
+    assert '"$guest/autounattend.xml" > "$staging/disc/Autounattend.xml"' in create
