@@ -262,3 +262,12 @@ def test_the_windows_iso_is_unmounted_right_after_checking(tmp_path: Path) -> No
     detach = next(i for i, c in enumerate(calls) if c.startswith("hdiutil detach"))
     status = next(i for i, c in enumerate(calls) if c.startswith("utmctl status"))
     assert detach < status
+
+
+def test_create_leaves_the_tpm_off() -> None:
+    # Regression: with QEMU:TPMDevice turned on in config.plist, the installer ran but the
+    # installed Windows hung at the firmware splash on every boot. The answer file's LabConfig
+    # bypass covers Windows 11's TPM check instead.
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    assert "TPMDevice true" not in create
+    assert "BypassTPMCheck" in (GUEST / "autounattend.xml").read_text()

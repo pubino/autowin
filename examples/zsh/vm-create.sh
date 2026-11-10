@@ -108,7 +108,7 @@ if (( ! exists )); then
 
   if (( dry )); then
     print -- "+ osascript: make QEMU aarch64 VM $name (2 USB CD drives, NVMe disk, shared network)"
-    print -- "+ clone $iso and provision.iso into the VM bundle; name them, a TPM and a QEMU monitor in config.plist"
+    print -- "+ clone $iso and provision.iso into the VM bundle; name them and a QEMU monitor in config.plist"
     print -- "+ $UTMCTL start $name; check both discs with the monitor; press Space at the boot prompt"
   else
     vm_id=$(osascript - "$name" "$memory" "$cpus" $(( disk * 1024 )) <<'APPLESCRIPT'
@@ -135,8 +135,10 @@ APPLESCRIPT
     cp -c "$iso" "$bundle/Data/windows.iso" 2>/dev/null || cp "$iso" "$bundle/Data/windows.iso"
     cp -c "$state/provision.iso" "$bundle/Data/provision.iso" 2>/dev/null || cp "$state/provision.iso" "$bundle/Data/provision.iso"
     "$PLISTBUDDY" -c "Add :Drive:0:ImageName string windows.iso" \
-      -c "Add :Drive:1:ImageName string provision.iso" -c "Set :QEMU:TPMDevice true" \
+      -c "Add :Drive:1:ImageName string provision.iso" \
       -c "Delete :QEMU:AdditionalArguments" "$bundle/config.plist" 2>/dev/null || true
+    # No TPM: with QEMU:TPMDevice set here, the installed Windows hangs at the firmware splash
+    # (the installer runs fine). The answer file bypasses Windows 11's TPM check instead.
     "$PLISTBUDDY" -c "Add :QEMU:AdditionalArguments array" -c "Add :QEMU:AdditionalArguments:0 string -monitor" \
       -c "Add :QEMU:AdditionalArguments:1 string unix:$name.mon,server=on,wait=off" "$bundle/config.plist"
     # UTM keeps the configuration it created in memory: without a reload it starts the VM with

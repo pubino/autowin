@@ -15,8 +15,10 @@ Each of these cost a debugging session. Most now have a regression test in this 
 3. **`reload configuration` is refused (OSStatus -10004).** Edit `config.plist` while
    the VM is stopped and start it with `utmctl start`; no reload is needed.
 
-4. **The AppleScript configuration has no TPM switch.** Set `QEMU:TPMDevice` in
-   `config.plist`. The answer file also sets Windows Setup's LabConfig bypasses.
+4. **Do not turn on the TPM by editing `config.plist`.** With `QEMU:TPMDevice` set there,
+   Setup ran but the installed Windows hung at the firmware splash on every boot (CPU busy,
+   no disk writes); without it, it booted at once. The answer file's LabConfig bypasses
+   cover Windows 11's TPM check, and no TPM also means no automatic BitLocker.
 
 5. **Two answer files conflict.** UTM's guest tools ISO has its own `Autounattend.xml`,
    and Windows Setup reads the file from the root of any removable disc. Ship one
@@ -75,3 +77,14 @@ Each of these cost a debugging session. Most now have a regression test in this 
 17. **A failed QEMU start shows "Internal error trying to connect to SPICE server".** It
     is a symptom: UTM's display could not connect because QEMU exited. The real error is
     in `utmctl start`'s output.
+
+18. **`screendump` goes black once Windows' display driver takes over.** It shows the
+    firmware and Setup, then only black frames while the UTM window shows Windows. Judge
+    progress by disk activity (`info blockstats` on the monitor) as well.
+
+19. **`utmctl exec` runs as SYSTEM, not as the logged-in user.** Fine for installers; anything
+    that needs the desktop session (Office automation, GUI apps) must run in the user's
+    session, for example through a scheduled task for that user.
+
+20. **Do not edit a zsh script while it runs.** zsh reads scripts as it goes; a run that was
+    waiting while its file changed failed at the end with `unmatched "`.
