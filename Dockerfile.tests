@@ -6,9 +6,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# zsh runs the example scripts against fake macOS tools (hdiutil, utmctl, osascript).
+# zsh runs the example scripts against fake macOS tools (hdiutil, utmctl, osascript); nc talks
+# to a fake QEMU monitor socket.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends zsh \
+ && apt-get install -y --no-install-recommends zsh netcat-openbsd \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work

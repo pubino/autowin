@@ -9,12 +9,15 @@
 # does not create a second VM: it waits for the existing one. Local state (password, provisioning
 # disc) is kept in ~/Library/Application Support/autowin/NAME; vm-destroy.sh removes it.
 set -euo pipefail
-guest=${0:A:h:h}/guest
+here=${0:A:h}
+guest=${here:h}/guest
+source "$here/monitor.zsh"
 
 UTMCTL=${UTMCTL:-/Applications/UTM.app/Contents/MacOS/utmctl}
 GUEST_TOOLS=${GUEST_TOOLS:-$HOME/Library/Containers/com.utmapp.UTM/Data/Library/Application Support/GuestSupportTools/utm-guest-tools-latest.iso}
 STATE_ROOT=${AUTOWIN_STATE:-$HOME/Library/Application Support/autowin}
 UTM_DOCS=${UTM_DOCS:-$HOME/Library/Containers/com.utmapp.UTM/Data/Documents}
+PLISTBUDDY=${PLISTBUDDY:-/usr/libexec/PlistBuddy}
 VM_USER=${AUTOWIN_USER:-tester}
 
 name=${AUTOWIN_NAME:-autowin} memory=${AUTOWIN_MEMORY:-8192} cpus=${AUTOWIN_CPUS:-4} disk=${AUTOWIN_DISK_GB:-64} timeout=${AUTOWIN_TIMEOUT_MIN:-90} dry=0 iso=""
@@ -54,15 +57,23 @@ cleanup() {
   [[ -z "$staging" ]] || rm -rf "$staging"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP  # so a killed run still unmounts (EXIT alone does not fire on signals)
 mount_ro() {  # mount_ro IMAGE: mounts read-only, sets REPLY to the mount point
   local m; m=$(mktemp -d "${TMPDIR:-/tmp}/autowin.XXXXXX")
   hdiutil attach -quiet -readonly -nobrowse -mountpoint "$m" "$1" || { rmdir "$m"; die "cannot mount $1"; }
   mounts+=("$m"); REPLY=$m
 }
+unmount() {  # unmount MOUNTPOINT now instead of at exit
+  hdiutil detach -quiet "$1" 2>/dev/null || true
+  rmdir "$1" 2>/dev/null || true
+  mounts=(${mounts:#$1})
+}
 
 mount_ro "$iso"; win=$REPLY
 [[ -f "$win/efi/boot/bootaa64.efi" ]] || die "not an Arm64 Windows ISO (no efi/boot/bootaa64.efi)"
 [[ -f "$win/sources/install.wim" || -f "$win/sources/install.esd" ]] || die "not a Windows install ISO"
+[[ -f "$win/efi/microsoft/boot/cdboot_noprompt.efi" ]] || die "the ISO has no efi/microsoft/boot/cdboot_noprompt.efi"
+unmount "$win"  # checked; do not hold the ISO for the rest of the run
 
 state="$STATE_ROOT/$name"
 exists=0
@@ -97,8 +108,8 @@ if (( ! exists )); then
 
   if (( dry )); then
     print -- "+ osascript: make QEMU aarch64 VM $name (2 USB CD drives, NVMe disk, shared network)"
-    print -- "+ clone $iso and provision.iso into the VM bundle; name them in config.plist; enable TPM"
-    print -- "+ $UTMCTL start $name; press a key at the boot prompt"
+    print -- "+ clone $iso and provision.iso into the VM bundle; name them, a TPM and a QEMU monitor in config.plist"
+    print -- "+ $UTMCTL start $name; check both discs with the monitor; press Space at the boot prompt"
   else
     vm_id=$(osascript - "$name" "$memory" "$cpus" $(( disk * 1024 )) <<'APPLESCRIPT'
 on run argv
@@ -115,7 +126,7 @@ APPLESCRIPT
     # cloning it in costs no space on APFS.
     bundle=""
     for b in "$UTM_DOCS"/*.utm(N); do
-      if [[ "$(/usr/libexec/PlistBuddy -c 'Print :Information:UUID' "$b/config.plist" 2>/dev/null)" == "$vm_id" ]]; then
+      if [[ "$("$PLISTBUDDY" -c 'Print :Information:UUID' "$b/config.plist" 2>/dev/null)" == "$vm_id" ]]; then
         bundle=$b
       fi
     done
@@ -123,23 +134,46 @@ APPLESCRIPT
     [[ -n "$bundle" ]] || die "cannot find the bundle of the new VM ($vm_id)"
     cp -c "$iso" "$bundle/Data/windows.iso" 2>/dev/null || cp "$iso" "$bundle/Data/windows.iso"
     cp -c "$state/provision.iso" "$bundle/Data/provision.iso" 2>/dev/null || cp "$state/provision.iso" "$bundle/Data/provision.iso"
-    /usr/libexec/PlistBuddy -c "Add :Drive:0:ImageName string windows.iso" \
-      -c "Add :Drive:1:ImageName string provision.iso" -c "Set :QEMU:TPMDevice true" "$bundle/config.plist"
+    "$PLISTBUDDY" -c "Add :Drive:0:ImageName string windows.iso" \
+      -c "Add :Drive:1:ImageName string provision.iso" -c "Set :QEMU:TPMDevice true" \
+      -c "Delete :QEMU:AdditionalArguments" "$bundle/config.plist" 2>/dev/null || true
+    "$PLISTBUDDY" -c "Add :QEMU:AdditionalArguments array" -c "Add :QEMU:AdditionalArguments:0 string -monitor" \
+      -c "Add :QEMU:AdditionalArguments:1 string unix:$name.mon,server=on,wait=off" "$bundle/config.plist"
+    # UTM keeps the configuration it created in memory: without a reload it starts the VM with
+    # empty CD drives. The reload reports an error (-2700) but applies the file.
+    osascript -e "tell application \"UTM\" to reload configuration of virtual machine id \"$vm_id\"" \
+      >/dev/null 2>&1 || true
     "$UTMCTL" start "$name"
-    # Windows Setup asks "Press any key to boot from CD or DVD" for a few seconds.
-    osascript - "$name" <<'APPLESCRIPT'
-on run argv
-  tell application "UTM"
-    set vm to virtual machine named (item 1 of argv)
-    repeat 25 times
-      delay 1
-      try
-        input keystroke vm text " "
-      end try
-    end repeat
-  end tell
-end run
-APPLESCRIPT
+
+    # Positive evidence that the discs are in: ask QEMU itself, not the configuration.
+    blocks=""
+    for _ in {1..30}; do
+      blocks=$(monitor "$name" 0.2 "info block" 2>/dev/null || true)
+      [[ "$blocks" == *windows.iso* && "$blocks" == *provision.iso* ]] && break
+      sleep 1
+    done
+    [[ "$blocks" == *windows.iso* && "$blocks" == *provision.iso* ]] ||
+      die "the VM started without its discs (QEMU reports no windows.iso/provision.iso)"
+
+    # "Press any key to boot from CD or DVD": UTM's AppleScript keystrokes never reach the guest,
+    # so press Space through the monitor. If the prompt was missed the firmware drops to Shell>;
+    # start the CD's boot loader from there. Setup writing to the disk is the evidence it started.
+    # Never send keys once it has: Space would press Setup's focused Cancel button.
+    qcow=("$bundle"/Data/*.qcow2(N))
+    disk_mb() { print -- $(( $(du -k "$qcow[1]" | cut -f1) / 1024 )); }
+    "$here/vm-keys.sh" --any-key 20 "$name"
+    started=0
+    for attempt in 1 2 3; do
+      for _ in {1..36}; do
+        (( $(disk_mb) > 1024 )) && { started=1; break; }
+        sleep 5
+      done
+      (( started )) && break
+      say "Setup has not started (attempt $attempt); starting the CD's boot loader from the firmware shell"
+      "$here/vm-keys.sh" "$name" 'fs0:\efi\boot\bootaa64.efi'
+      "$here/vm-keys.sh" --any-key 20 "$name"
+    done
+    (( started )) || die "Windows Setup did not start; look with: $here/vm-screen.sh $name screen.png"
   fi
 else
   say "VM $name already exists; waiting for it"
@@ -150,16 +184,14 @@ fi
 
 # --- wait until logged in with guest tools ---------------------------------------------------
 (( dry )) && { say "dry run: would wait up to $timeout min for the guest agent"; exit 0; }
-probe() {  # exit 0 once the guest agent runs commands and first-logon setup has finished
-  perl -e 'alarm shift; exec @ARGV' 60 \
-    "$UTMCTL" exec --hide "$name" --cmd cmd.exe /c 'if exist C:\autowin-setup.done (exit 0) else (exit 1)' \
-    >/dev/null 2>&1
+# utmctl exits 0 even when the guest agent is not running (it only prints an error), so its exit
+# code proves nothing. Readiness is positive evidence instead: the marker file that setup-guest.ps1
+# writes, pulled through the agent, holding the timestamp it wrote.
+pull() {  # pull GUEST_PATH: the file's contents on stdout, empty if unavailable
+  perl -e 'alarm shift; exec @ARGV' 60 "$UTMCTL" file pull --hide "$name" "$1" 2>/dev/null || true
 }
-failed() {
-  perl -e 'alarm shift; exec @ARGV' 60 \
-    "$UTMCTL" exec --hide "$name" --cmd cmd.exe /c 'if exist C:\autowin-setup.failed (exit 0) else (exit 1)' \
-    >/dev/null 2>&1
-}
+probe() { [[ "$(pull 'C:\autowin-setup.done')" =~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' ]]; }
+failed() { [[ -n "$(pull 'C:\autowin-setup.failed')" ]]; }
 deadline=$(( SECONDS + timeout * 60 ))
 say "installing Windows; this usually takes 20-30 minutes (watch it in the UTM window)"
 until probe; do

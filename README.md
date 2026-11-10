@@ -11,11 +11,15 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 | --- | --- |
 | [`examples/zsh/vm-create.sh`](examples/zsh/vm-create.sh) | Create, install, log in, install guest tools, wait until ready. |
 | [`examples/zsh/vm-destroy.sh`](examples/zsh/vm-destroy.sh) | Delete the VM and its local state. |
+| [`examples/zsh/vm-keys.sh`](examples/zsh/vm-keys.sh) | Type into the VM through its QEMU monitor (UTM's AppleScript keystrokes never arrive). |
+| [`examples/zsh/vm-screen.sh`](examples/zsh/vm-screen.sh) | Save a PNG screenshot of the VM's display. |
+| [`examples/zsh/monitor.zsh`](examples/zsh/monitor.zsh) | Shared QEMU monitor helpers. |
+| [`examples/tools/ppm2png.py`](examples/tools/ppm2png.py) | Screenshot converter (standard library only). |
 | [`examples/guest/autounattend.xml`](examples/guest/autounattend.xml) | Unattended Windows Setup answer file (based on UTM's). |
 | [`examples/guest/setup-guest.ps1`](examples/guest/setup-guest.ps1) | First-logon script: trust the driver publisher, install UTM guest tools silently. |
 | [`docs/gotchas.md`](docs/gotchas.md) | Failures already debugged once. Read before debugging. |
 | [`docs/for-agents.md`](docs/for-agents.md) | Entry point for agents pointed at this repository. |
-| [`tests/`](tests/) | Tests that run the scripts against fake `hdiutil`, `uname`, `utmctl` and `osascript`: no VM needed. |
+| [`tests/`](tests/) | Tests that run the scripts against fake `hdiutil`, `uname`, `utmctl`, `osascript` and a fake QEMU monitor: no VM needed. |
 
 ## Quick start
 
@@ -39,6 +43,14 @@ about 70 GB free.
    ```zsh
    utmctl exec autowin --cmd cmd.exe /c ver
    utmctl file push autowin 'C:\Users\tester\in.txt' < in.txt
+   ```
+
+   Look at it or type into it from the host, for example to get past a screen the
+   scripts did not expect:
+
+   ```zsh
+   examples/zsh/vm-screen.sh autowin screen.png
+   examples/zsh/vm-keys.sh autowin 'some text'
    ```
 
 4. Throw it away: `examples/zsh/vm-destroy.sh autowin`.

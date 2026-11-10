@@ -56,7 +56,10 @@ def _stubs(tmp_path: Path, *, arm64_iso: bool = True) -> tuple[dict[str, str], P
     bin_dir.mkdir()
     files = 'mkdir -p "$m/sources"; : > "$m/sources/install.wim"'
     if arm64_iso:
-        files += '; mkdir -p "$m/efi/boot"; : > "$m/efi/boot/bootaa64.efi"'
+        files += (
+            '; mkdir -p "$m/efi/boot" "$m/efi/microsoft/boot"; : > "$m/efi/boot/bootaa64.efi"'
+            '; : > "$m/efi/microsoft/boot/cdboot_noprompt.efi"'
+        )
     stubs = {
         "uname": "echo arm64",
         # hdiutil attach ... -mountpoint M IMAGE: fake the ISO contents in M
@@ -180,3 +183,82 @@ def test_first_logon_runs_the_script_that_goes_on_the_disc() -> None:
     assert 'cp "$guest/setup-guest.ps1" "$staging/disc/setup-guest.ps1"' in create
     assert r"if exist %d:\setup-guest.ps1" in answer
     assert '"$guest/autounattend.xml" > "$staging/disc/Autounattend.xml"' in create
+
+
+def _waiting_env(tmp_path: Path, pull_output: str) -> tuple[dict[str, str], Path]:
+    """An existing, started VM; `utmctl exec`/`file pull` behave like the real one without an agent:
+    print an error and still exit 0."""
+    env, log = _stubs(tmp_path)
+    env["VM_STATUS"] = "started"
+    fake = Path(env["UTMCTL"])
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'echo "utmctl $*" >> {log}\n'
+        '[ "$1" = status ] && echo "$VM_STATUS" && exit 0\n'
+        'if [ "$1" = file ] && [ "$2" = pull ]; then\n'
+        '  case "$*" in *setup.done*) printf "%s" "$PULL_DONE";; esac\n'
+        "  exit 0\n"
+        "fi\n"
+        'echo "The QEMU guest agent is not running or not installed on the guest." >&2\n'
+        "exit 0\n"
+    )
+    env["PULL_DONE"] = pull_output
+    return env, log
+
+
+def test_a_guest_without_agent_is_not_reported_ready(tmp_path: Path) -> None:
+    # Regression: utmctl exits 0 when the guest agent is missing; that was taken as "ready".
+    env, _ = _waiting_env(tmp_path, pull_output="")
+    res = _zsh("vm-create.sh", "--timeout", "0", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode != 0
+    assert "timed out" in res.stderr
+    assert "ready: " not in res.stdout
+
+
+def test_ready_needs_the_marker_the_guest_wrote(tmp_path: Path) -> None:
+    env, log = _waiting_env(tmp_path, pull_output="2026-11-10T14:05:31.1234567-05:00")
+    res = _zsh("vm-create.sh", "--timeout", "1", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "ready: t1" in res.stdout
+    assert "file pull" in log.read_text()
+
+
+def test_create_drives_the_boot_through_the_qemu_monitor() -> None:
+    # UTM's AppleScript keystrokes report success but never reach the guest; a startup.nsh on an
+    # ISO cannot be read by the firmware. Keys go through the QEMU monitor instead.
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    assert "input keystroke" not in create and "startup.nsh" not in create
+    assert "-monitor" in create and "unix:$name.mon,server=on,wait=off" in create
+    assert '--any-key 20 "$name"' in create
+    assert r"fs0:\efi\boot\bootaa64.efi" in create
+    assert not (GUEST / "startup.nsh").exists()
+
+
+def test_create_reloads_the_config_and_checks_discs_with_qemu() -> None:
+    # Regression: UTM started the VM from its in-memory configuration, with empty CD drives.
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    reload = create.index("reload configuration of virtual machine id")
+    start = create.index('"$UTMCTL" start "$name"\n', reload)
+    check = create.index('"info block"', start)
+    assert reload < start < check
+    assert "the VM started without its discs" in create
+
+
+def test_create_stops_pressing_keys_once_setup_writes() -> None:
+    # Space would press Setup's focused Cancel button once installation is under way.
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    loop = create[create.index("for attempt in 1 2 3; do") :]
+    loop = loop[: loop.index("done\n    (( started ))")]
+    assert loop.index("{ started=1; break; }") < loop.index("vm-keys.sh")
+    assert "(( started )) && break" in loop
+
+
+def test_the_windows_iso_is_unmounted_right_after_checking(tmp_path: Path) -> None:
+    # A mount held for the whole (long) run keeps the ISO busy for anyone else.
+    env, log = _stubs(tmp_path)
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    calls = log.read_text().splitlines()
+    detach = next(i for i, c in enumerate(calls) if c.startswith("hdiutil detach"))
+    status = next(i for i, c in enumerate(calls) if c.startswith("utmctl status"))
+    assert detach < status

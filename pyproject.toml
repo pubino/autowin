@@ -14,6 +14,7 @@ package = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]
@@ -30,4 +31,4 @@ ignore = ["S603", "S607"]  # tests run the scripts with argument lists
 [tool.mypy]
 strict = true
 python_version = "3.12"
-files = ["tests"]
+files = ["tests", "examples/tools"]
