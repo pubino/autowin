@@ -13,7 +13,7 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 | [`examples/zsh/vm-destroy.sh`](examples/zsh/vm-destroy.sh) | Release the VM's Microsoft 365 license, then delete the VM and its local state. |
 | [`examples/zsh/vm-clone.sh`](examples/zsh/vm-clone.sh) | Clone a stopped VM with its own monitor socket and MAC address; records lineage. |
 | [`examples/guest/release-office.ps1`](examples/guest/release-office.ps1) | The guest side of the license release (Microsoft's reset-activation steps). |
-| [`examples/zsh/vm-ps.sh`](examples/zsh/vm-ps.sh) | Run PowerShell in the guest and print its output (exit 1 if it threw). |
+| [`examples/zsh/vm-ps.sh`](examples/zsh/vm-ps.sh) | Run PowerShell in the guest and print its output (exit 1 if it threw); `--user` runs it in the user's desktop session, e.g. for Office automation. |
 | [`examples/zsh/vm-office.sh`](examples/zsh/vm-office.sh) | Install Microsoft 365 Apps with only the apps named (e.g. Access); activation is a sign-in. |
 | [`examples/guest/install-office.ps1`](examples/guest/install-office.ps1) | The guest side: Office Deployment Tool (signature-checked), silent install, marker files. |
 | [`examples/zsh/vm-keys.sh`](examples/zsh/vm-keys.sh) | Type into the VM through its QEMU monitor (UTM's AppleScript keystrokes never arrive). |

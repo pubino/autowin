@@ -157,3 +157,7 @@ Each of these cost a debugging session. Most now have a regression test in this 
     can sign out the others, so `vm-destroy.sh` releases only for a VM without clones and that
     is not a clone (lineage is in `AUTOWIN_STATE/NAME/clone-of`). A local release does not prove
     that Microsoft has freed the device slot; the account's device list does.
+
+36. **Inside zsh single quotes, `''` is not an escaped quote.** `'... VALUES (''a'', 1)'` reaches
+    PowerShell as `VALUES (a, 1)` ("Too few parameters"). Pass PowerShell with a quoted heredoc:
+    `code=$(cat <<'PS' ... PS)` then `vm-ps.sh VM "$code"`; nothing in it is touched.

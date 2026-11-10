@@ -68,8 +68,9 @@ def main(argv: list[str]) -> int:
                     host(path).unlink(missing_ok=True)
         elif "-EncodedCommand" in cmd:
             code = base64.b64decode(cmd[cmd.index("-EncodedCommand") + 1]).decode("utf-16-le")
-            out = re.search(r"-Path '([^']+\.out)'", code)
-            fin = re.search(r"-Path '([^']+\.done)'", code)
+            # the results the host pulls (with --user the wrapper copies them there)
+            out = re.search(r"'(C:\\autowin-ps\\[^']+\.out)'", code)
+            fin = re.search(r"'(C:\\autowin-ps\\[^']+\.done)'", code)
             assert out and fin, code
             failed = "throw" in code
             if "AUTOWIN_COUNT_LICENSES" in code:

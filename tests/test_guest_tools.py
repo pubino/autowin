@@ -147,3 +147,30 @@ def test_office_fetches_the_arm64x_package_over_https() -> None:
     assert ps1.index("'/download'") < fetch < ps1.index("'/configure'")
     # complete means the sizes the CDN reports, not just that files exist
     assert "Content-Length" in ps1
+
+
+def test_vm_ps_user_runs_in_the_users_session(guest: tuple[Path, dict[str, str]]) -> None:
+    # Office automation needs the logged-on user's desktop session; utmctl exec runs as SYSTEM.
+    store, env = guest
+    res = _run("vm-ps.sh", "--user", "tester", "vm1", "Get-Date", env=env)
+    assert res.returncode == 0, res.stderr
+    assert res.stdout.strip() == "guest says hi"
+    import base64
+    import re
+
+    call = next(
+        c for c in (store / "_calls.log").read_text().splitlines() if "-EncodedCommand" in c
+    )
+    m = re.search(r"-EncodedCommand (\S+)", call)
+    assert m is not None
+    code = base64.b64decode(m.group(1)).decode("utf-16-le")
+    assert "Register-ScheduledTask" in code and "-LogonType Interactive" in code
+    assert '"$env:COMPUTERNAME\\tester"' in code
+    assert "Unregister-ScheduledTask" in code
+
+
+def test_vm_ps_user_rejects_a_bad_user_name(guest: tuple[Path, dict[str, str]]) -> None:
+    _, env = guest
+    res = _run("vm-ps.sh", "--user", "x;y", "vm1", "Get-Date", env=env)
+    assert res.returncode == 1
+    assert "invalid user" in res.stderr
