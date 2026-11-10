@@ -142,3 +142,9 @@ Each of these cost a debugging session. Most now have a regression test in this 
 32. **GUI programs must run in the user's session.** `utmctl exec` runs as SYSTEM in session 0,
     so a window would never appear. Register a scheduled task with an `Interactive` principal for
     the logged-on user and start it (no password needed); the program runs on the desktop.
+
+33. **Office's license files are UTF-16 JSON holding a signed token, and errors echo input.**
+    `ConvertFrom-Json` on the raw file failed and its error message printed the whole token.
+    Read with `-Encoding Unicode`, print only chosen fields, and replace errors with a short
+    message. A Microsoft 365 activation shows as `LicenseType = Subscription`,
+    `Status = Provisioned`.
