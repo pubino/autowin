@@ -12,7 +12,7 @@ here=${0:A:h}
 script=${here:h}/guest/install-office.ps1
 UTMCTL=${UTMCTL:-/Applications/UTM.app/Contents/MacOS/utmctl}
 
-name=${AUTOWIN_NAME:-autowin} apps=Access timeout=45 dry=0
+name=${AUTOWIN_NAME:-autowin} apps=Access timeout=75 dry=0
 die() { print -ru2 -- "vm-office: $*"; exit 1; }  # -r: Windows paths have backslashes
 say() { print -r -- "vm-office: $*"; }
 while (( $# )); do

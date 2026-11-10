@@ -114,3 +114,23 @@ def test_messages_print_windows_paths_literally(guest: tuple[Path, dict[str, str
     res = _run("vm-office.sh", "vm1", env={**env, "FAKE_OFFICE_FAIL": "1"})
     assert res.returncode == 1
     assert "C:\\autowin-office.log" in res.stderr and "\a" not in res.stderr
+
+
+def test_office_downloads_to_a_local_source_then_installs_from_it() -> None:
+    # Regression: installing straight from the CDN left Office's main package at 0 MB in Delivery
+    # Optimization (twice, also in HTTP-only mode). Download first, check it, install offline.
+    ps1 = (ROOT / "examples/guest/install-office.ps1").read_text()
+    download = ps1.index("'/download'")
+    check = ps1.index("Office\\Data")
+    configure = ps1.index("'/configure'")
+    assert download < check < configure
+    assert 'SourcePath="$source"' in ps1
+
+
+def test_office_install_pauses_windows_update_and_restores_it() -> None:
+    # Windows Update started a 4.3 GB download during Office's; pause it for the install only.
+    ps1 = (ROOT / "examples/guest/install-office.ps1").read_text()
+    pause = ps1.index("NoAutoUpdate")
+    assert pause < ps1.index("'/download'")
+    finally_block = ps1[ps1.index("finally {") :]
+    assert "NoAutoUpdate" in finally_block  # restored even when the install fails

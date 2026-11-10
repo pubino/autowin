@@ -111,8 +111,23 @@ Each of these cost a debugging session. Most now have a regression test in this 
     (`DODownloadMode=0`) and restarts `DoSvc` before installing.
 
 26. **An Office install that was killed cannot simply be rerun.** The next attempt failed with
-    17002 ("Orchestration failed to initialize", error 88). On a throwaway VM, rebuild it
-    (`vm-destroy.sh`, `vm-create.sh`); that takes minutes.
+    17002 ("Orchestration failed to initialize", error 88); after the processes were stopped, a
+    later install from a complete local source sat at "1%" for 20 minutes. The Office service
+    keeps the interrupted scenario. On a throwaway VM, rebuild it (`vm-destroy.sh`,
+    `vm-create.sh`); that takes minutes.
 
 27. **zsh's `print` interprets backslash escapes.** `print "C:\\autowin.log"` prints
     `C:` + BEL + `utowin.log`. Use `print -r` for anything that may hold a Windows path.
+
+28. **`utmctl file pull/push` moves about 0.3 MB/s.** Fine for scripts and small databases;
+    hours for gigabytes. For large files, serve them from the host over HTTP (the guest
+    reaches the Mac at the shared network's gateway) instead of the guest agent.
+
+29. **Installing Office straight from the CDN can stall; download first.** The installer's
+    main package stayed at 0 MB in Delivery Optimization twice, even in HTTP-only mode, while
+    `setup.exe /download` of the same release progressed (about 1.7 MB/s against 7 MB/s on the
+    host). `install-office.ps1` downloads to a local source, checks it, then installs from it.
+
+30. **Windows Update starts large downloads in a fresh VM.** A 4.3 GB update ran alongside
+    Office's download. `install-office.ps1` pauses automatic updates for the install and
+    restores the setting afterwards; updates belong in their own step.

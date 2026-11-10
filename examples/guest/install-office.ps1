@@ -14,7 +14,15 @@ $work = 'C:\autowin-office'
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 Remove-Item -Force -ErrorAction SilentlyContinue 'C:\autowin-office.done', 'C:\autowin-office.failed'
 Start-Transcript -Path 'C:\autowin-office.log' -Append | Out-Null
+# Windows Update started a 4.3 GB download during Office's in a fresh VM. Pause automatic updates
+# for the install only; the previous setting is restored in `finally`, even on failure.
+$au = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+$auBefore = (Get-ItemProperty -Path $au -Name NoAutoUpdate -ErrorAction SilentlyContinue).NoAutoUpdate
 try {
+    New-Item -Path $au -Force | Out-Null
+    Set-ItemProperty -Path $au -Name NoAutoUpdate -Type DWord -Value 1
+    Stop-Service wuauserv -Force -ErrorAction SilentlyContinue
+
     # Office Deployment Tool app IDs; everything not asked for is excluded.
     # With -File, "-Apps Access,Excel" arrives as one string: split it here.
     $Apps = @($Apps | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
@@ -30,17 +38,20 @@ try {
         throw "Office Deployment Tool signature is not a valid Microsoft signature ($($sig.Status))"
     }
 
-    # Office downloads through Delivery Optimization; in its default LAN-peering mode the main
-    # package sat at 0 MB in a UTM VM. HTTP-only mode (0) avoids peering.
+    # Installing straight from the CDN goes through Delivery Optimization, where Office's main
+    # package sat at 0 MB in a UTM VM (also in HTTP-only mode). So: download to a local source
+    # first, check it arrived, then install from it without the network.
     $do = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization'
     New-Item -Path $do -Force | Out-Null
     Set-ItemProperty -Path $do -Name DODownloadMode -Type DWord -Value 0
     Restart-Service DoSvc -Force
 
+    $source = Join-Path $work 'source'
+    New-Item -ItemType Directory -Force -Path $source | Out-Null
     $config = Join-Path $work 'config.xml'
     @"
 <Configuration>
-  <Add OfficeClientEdition="64" Channel="$Channel">
+  <Add SourcePath="$source" OfficeClientEdition="64" Channel="$Channel">
     <Product ID="$Product">
       <Language ID="en-us" />
 $exclude
@@ -53,9 +64,17 @@ $exclude
 </Configuration>
 "@ | Set-Content -Path $config -Encoding UTF8
 
+    $p = Start-Process -FilePath $setup -ArgumentList '/download', $config -WorkingDirectory $work -Wait -PassThru
+    Write-Output "Office Deployment Tool /download exit code: $($p.ExitCode)"
+    if ($p.ExitCode -ne 0) { throw "Office download failed with exit code $($p.ExitCode)" }
+    $cabs = @(Get-ChildItem (Join-Path $source 'Office\Data') -Recurse -Filter *.cab -ErrorAction SilentlyContinue)
+    $mb = (Get-ChildItem $source -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+    if ($cabs.Count -eq 0 -or $mb -lt 500) { throw ("Office download is incomplete ({0:N0} MB, {1} cab files)" -f $mb, $cabs.Count) }
+    Write-Output ("Office source: {0:N0} MB" -f $mb)
+
     $p = Start-Process -FilePath $setup -ArgumentList '/configure', $config -WorkingDirectory $work -Wait -PassThru
-    Write-Output "Office Deployment Tool exit code: $($p.ExitCode)"
-    if ($p.ExitCode -ne 0) { throw "Office Deployment Tool failed with exit code $($p.ExitCode)" }
+    Write-Output "Office Deployment Tool /configure exit code: $($p.ExitCode)"
+    if ($p.ExitCode -ne 0) { throw "Office install failed with exit code $($p.ExitCode)" }
 
     # Positive evidence: the executable of every app asked for.
     $exe = @{ Access = 'MSACCESS.EXE'; Excel = 'EXCEL.EXE'; Word = 'WINWORD.EXE'; PowerPoint = 'POWERPNT.EXE';
@@ -74,5 +93,7 @@ catch {
     Set-Content -Path 'C:\autowin-office.failed' -Value "$_"
 }
 finally {
+    if ($null -eq $auBefore) { Remove-ItemProperty -Path $au -Name NoAutoUpdate -ErrorAction SilentlyContinue }
+    else { Set-ItemProperty -Path $au -Name NoAutoUpdate -Type DWord -Value $auBefore }
     Stop-Transcript | Out-Null
 }
