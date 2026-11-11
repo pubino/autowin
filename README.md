@@ -94,6 +94,35 @@ Windows and Office device identity, so:
 **Sensitive data:** take a snapshot of the clean, set-up VM, then run sessions that handle
 data with `utmctl start --disposable`, so nothing is written to the VM's disk.
 
+## Rebuilding or replacing the host
+
+The repository holds everything needed to rebuild. The VMs and their state do not live in it:
+
+| Lives only on this Mac | Where |
+| --- | --- |
+| VMs: disks, snapshots, Windows and Office activation | `~/Library/Containers/com.utmapp.UTM/Data/Documents/NAME.utm` |
+| Per-VM state: password, clone lineage (`clone-of`) | `AUTOWIN_STATE/NAME` (default `~/Library/Application Support/autowin/NAME`) |
+| Your settings | `.env` (gitignored; copy from `example.env`) |
+| The Windows ISO | wherever you saved it; download it again in a browser |
+
+**Before wiping or replacing the Mac**, do one of these for every VM that holds a Microsoft 365
+license:
+
+- **Throw it away:** `vm-destroy.sh NAME`. Destroy clones first (they keep the license), then
+  the base: with no clones left it releases the license by default.
+- **Keep it:** stop it and back up its `NAME.utm` bundle **and** the whole `AUTOWIN_STATE`
+  directory together. Lineage is only in `AUTOWIN_STATE`. A bundle restored without it looks
+  like a standalone VM, so `vm-destroy.sh` refuses to guess and asks for `--release-license`
+  or `--keep-license`.
+
+If the Mac is already gone with a licensed VM on it, sign that device out in the Microsoft
+account's device list; nothing on a new Mac can release it.
+
+**On the new Mac:** install UTM 5 and open it once, clone this repository, recreate `.env` if
+you used one, and either restore the backups to the same paths (then `utmctl list` should show
+the VMs) or run `vm-create.sh` again. For development, also install `uv`, Docker and
+`docker-compose`.
+
 ## Developing this repo
 
 ```zsh
