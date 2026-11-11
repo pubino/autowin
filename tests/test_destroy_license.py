@@ -19,6 +19,9 @@ def vm(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     store = tmp_path / "guest"
     store.mkdir()
     (store / "C__autowin-setup.done").write_text("2026-11-10T14:00:00.0-05:00")
+    # vm-create.sh always leaves local state; without it the lineage is unknown (see below).
+    (tmp_path / "state" / "vm1").mkdir(parents=True)
+    (tmp_path / "state" / "vm1" / "password").write_text("x")
     env = {
         **os.environ,
         "UTMCTL": str(FAKE),
@@ -80,7 +83,7 @@ def test_a_failed_release_keeps_the_vm(vm: tuple[Path, dict[str, str]]) -> None:
 def test_a_clone_keeps_the_license_by_default(vm: tuple[Path, dict[str, str]]) -> None:
     store, env = vm
     state = Path(env["AUTOWIN_STATE"]) / "vm1"
-    state.mkdir(parents=True)
+    state.mkdir(parents=True, exist_ok=True)
     (state / "clone-of").write_text("base\n")
     res = _destroy("vm1", env=env)
     assert res.returncode == 0, res.stderr
@@ -93,7 +96,7 @@ def test_a_clone_keeps_the_license_by_default(vm: tuple[Path, dict[str, str]]) -
 def test_release_license_overrides_for_a_clone(vm: tuple[Path, dict[str, str]]) -> None:
     store, env = vm
     state = Path(env["AUTOWIN_STATE"]) / "vm1"
-    state.mkdir(parents=True)
+    state.mkdir(parents=True, exist_ok=True)
     (state / "clone-of").write_text("base\n")
     res = _destroy("--release-license", "vm1", env=env)
     assert res.returncode == 0, res.stderr
@@ -118,11 +121,38 @@ def test_keep_license_skips_the_release(vm: tuple[Path, dict[str, str]]) -> None
     assert not any("release-office.ps1" in c for c in _calls(store))
 
 
+def test_without_local_state_the_license_choice_must_be_explicit(
+    vm: tuple[Path, dict[str, str]],
+) -> None:
+    # Restoring VM bundles to a new or wiped Mac without AUTOWIN_STATE loses clone lineage: a
+    # clone would look like a standalone VM, and releasing its license signs the others out.
+    store, env = vm
+    shutil.rmtree(Path(env["AUTOWIN_STATE"]) / "vm1")
+    res = _destroy("vm1", env=env)
+    assert res.returncode == 1
+    assert "no local state for vm1" in res.stderr
+    assert "--release-license or --keep-license" in res.stderr
+    assert "nothing deleted" in res.stderr
+    calls = _calls(store) if (store / "_calls.log").exists() else []
+    assert not any("release-office.ps1" in c or "delete vm1" in c for c in calls)
+
+
+def test_without_local_state_an_explicit_choice_proceeds(
+    vm: tuple[Path, dict[str, str]],
+) -> None:
+    store, env = vm
+    shutil.rmtree(Path(env["AUTOWIN_STATE"]) / "vm1")
+    res = _destroy("--keep-license", "vm1", env=env)
+    assert res.returncode == 0, res.stderr
+    assert not any("release-office.ps1" in c for c in _calls(store))
+    assert any("delete vm1" in c for c in _calls(store))
+
+
 def test_a_vm_with_clones_keeps_the_license_by_default(vm: tuple[Path, dict[str, str]]) -> None:
     # Releasing the source's license would sign its clones out too (shared device identity).
     store, env = vm
     clone_state = Path(env["AUTOWIN_STATE"]) / "vm1-run"
-    clone_state.mkdir(parents=True)
+    clone_state.mkdir(parents=True, exist_ok=True)
     (clone_state / "clone-of").write_text("vm1\n")
     res = _destroy("vm1", env=env)
     assert res.returncode == 0, res.stderr

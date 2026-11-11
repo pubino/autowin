@@ -7,7 +7,8 @@
 # (examples/guest/release-office.ps1), starting the VM if needed, so the license does not stay
 # tied to a VM that no longer exists. A clone made by vm-clone.sh keeps it by default: it shares
 # its source's device identity, so releasing it would sign the source out too. If the release
-# fails, the VM is not deleted.
+# fails, the VM is not deleted. Clone lineage is read from local state (AUTOWIN_STATE); a VM in UTM
+# without it needs --release-license or --keep-license.
 set -euo pipefail
 here=${0:A:h}
 release_ps1=${here:h}/guest/release-office.ps1
@@ -32,6 +33,13 @@ while (( $# )); do
 done
 [[ "$name" =~ '^[A-Za-z0-9._-]{1,40}$' ]] || die "invalid name"
 state="$STATE_ROOT/$name"
+
+# Lineage lives only in local state. Without it (VM bundles restored to a new or wiped Mac without
+# AUTOWIN_STATE) a clone looks standalone, and releasing its license would sign the others out.
+if [[ "$license" == auto && ! -d "$state" ]] && "$UTMCTL" status "$name" >/dev/null 2>&1; then
+  die "no local state for $name ($state), so it is unknown whether it is a clone or has clones;" \
+    "pass --release-license or --keep-license; nothing deleted"
+fi
 
 if [[ "$license" == auto ]]; then
   clones=()
