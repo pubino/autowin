@@ -80,9 +80,19 @@ release_license() {
   "$UTMCTL" exec --hide "$name" --cmd cmd.exe /c 'mkdir C:\autowin-office' >/dev/null 2>&1 || true
   "$UTMCTL" file push --hide "$name" "$guest_ps1" < "$release_ps1" >/dev/null 2>&1 || true
   [[ "$(pull "$guest_ps1")" == "$(<"$release_ps1")" ]] || die "copying release-office.ps1 failed; nothing deleted"
+  # utmctl exec returns at once (gotcha 22): an earlier attempt's marker would be read as this
+  # run's result. Clear them and check they are gone first.
+  "$UTMCTL" exec --hide "$name" --cmd cmd.exe /c 'del /f /q C:\autowin-license.released C:\autowin-license.failed' \
+    >/dev/null 2>&1 || true
+  for _ in {1..30}; do
+    [[ -z "$(pull 'C:\autowin-license.released')$(pull 'C:\autowin-license.failed')" ]] && break
+    sleep 1
+  done
+  [[ -z "$(pull 'C:\autowin-license.released')$(pull 'C:\autowin-license.failed')" ]] ||
+    die "cannot clear the markers of an earlier release; nothing deleted"
   "$UTMCTL" exec --hide "$name" --cmd powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_ps1" \
     -User "$VM_USER" >/dev/null 2>&1 || true
-  deadline=$(( SECONDS + 180 ))
+  deadline=$(( SECONDS + 300 ))  # the guest waits up to 2 min for the desktop and 2 min for the sign-out
   local done_ failed
   while true; do
     done_=$(pull 'C:\autowin-license.released')
@@ -90,7 +100,7 @@ release_license() {
     failed=$(pull 'C:\autowin-license.failed')
     [[ -z "$failed" ]] || die "releasing the Office license failed: ${failed//$'\r'/}; nothing deleted" \
       "(--keep-license deletes anyway)"
-    (( SECONDS < deadline )) || die "no result from the license release within 3 minutes; nothing deleted"
+    (( SECONDS < deadline )) || die "no result from the license release within 5 minutes; nothing deleted"
     sleep 3
   done
   done_=${done_//$'\r'/}

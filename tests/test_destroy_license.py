@@ -128,3 +128,28 @@ def test_a_vm_with_clones_keeps_the_license_by_default(vm: tuple[Path, dict[str,
     assert res.returncode == 0, res.stderr
     assert "keeping the Office license: vm1 has clones (vm1-run)" in res.stdout
     assert not any("release-office.ps1" in c for c in _calls(store))
+
+
+def test_a_stale_failure_marker_is_not_taken_as_this_runs_result(
+    vm: tuple[Path, dict[str, str]],
+) -> None:
+    # Regression: utmctl exec returns at once, and the marker of an earlier failed attempt was
+    # read before the new run removed it: a release that succeeded was reported as failed.
+    store, env = vm
+    (store / "C__autowin-license.failed").write_text("the account sign-out did not run")
+    res = _destroy("vm1", env=env)
+    assert res.returncode == 0, res.stderr
+    assert "released the Office license in vm1" in res.stdout
+    calls = _calls(store)
+    assert _index(
+        calls, "del /f /q C:\\autowin-license.released C:\\autowin-license.failed"
+    ) < _index(calls, "release-office.ps1 -User")
+
+
+def test_release_waits_for_the_users_desktop() -> None:
+    # Regression: right after start the guest agent answered before the user was logged in, and
+    # the sign-out task could not run in a session that did not exist yet.
+    ps1 = (ROOT / "examples/guest/release-office.ps1").read_text()
+    wait = ps1.index("explorer")
+    assert wait < ps1.index("Register-ScheduledTask")
+    assert "-lt 120" in ps1  # result wait, seconds

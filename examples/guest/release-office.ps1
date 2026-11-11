@@ -16,7 +16,11 @@ try {
     Get-Process MSACCESS, EXCEL, WINWORD, POWERPNT, OUTLOOK, ONENOTE, MSPUB -ErrorAction SilentlyContinue |
         Stop-Process -Force
 
-    # 1. Web Account Manager sign-out, in the user's interactive session (scheduled task).
+    # 1. Web Account Manager sign-out, in the user's interactive session (scheduled task). Right
+    #    after start the guest agent answers before the user is logged on: wait for the desktop.
+    $desktop = { Get-Process explorer -IncludeUserName -ErrorAction SilentlyContinue | Where-Object { $_.UserName -like "*\$User" } }
+    for ($i = 0; $i -lt 120 -and -not (& $desktop); $i++) { Start-Sleep -Seconds 1 }
+    if (-not (& $desktop)) { throw "$User is not logged on to a desktop" }
     $wam = @'
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -42,12 +46,12 @@ Set-Content -Path "$env:LOCALAPPDATA\autowin-wam-signout.txt" -Value $n
     $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$User" -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName 'autowin-wam-signout' -Action $action -Principal $principal -Force | Out-Null
     Start-ScheduledTask -TaskName 'autowin-wam-signout'
-    for ($i = 0; $i -lt 60 -and -not (Test-Path $result); $i++) { Start-Sleep -Seconds 1 }
+    for ($i = 0; $i -lt 120 -and -not (Test-Path $result); $i++) { Start-Sleep -Seconds 1 }
     Unregister-ScheduledTask -TaskName 'autowin-wam-signout' -Confirm:$false
     Remove-Item -Force -ErrorAction SilentlyContinue $script
     $signedOut = if (Test-Path $result) { [int](Get-Content $result) } else { -1 }
     Remove-Item -Force -ErrorAction SilentlyContinue $result
-    if ($signedOut -lt 0) { throw 'the account sign-out did not run in the user session' }
+    if ($signedOut -lt 0) { throw 'the account sign-out in the user session gave no result within 2 minutes' }
 
     # 2. Cached licenses, identities and credentials.
     $removed = 0

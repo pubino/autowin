@@ -161,3 +161,9 @@ Each of these cost a debugging session. Most now have a regression test in this 
 36. **Inside zsh single quotes, `''` is not an escaped quote.** `'... VALUES (''a'', 1)'` reaches
     PowerShell as `VALUES (a, 1)` ("Too few parameters"). Pass PowerShell with a quoted heredoc:
     `code=$(cat <<'PS' ... PS)` then `vm-ps.sh VM "$code"`; nothing in it is touched.
+
+37. **Right after start, the guest agent answers before the user is logged on.** A license
+    release started then could not run its sign-out in the user's session. `release-office.ps1`
+    waits for the user's desktop (Explorer) first. And because `utmctl exec` returns at once
+    (gotcha 22), the retry read the first attempt's "failed" marker and reported failure for a
+    release that had succeeded: clear old markers, and check they are gone, before each run.

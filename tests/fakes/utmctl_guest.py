@@ -64,6 +64,8 @@ def main(argv: list[str]) -> int:
         cmd = args[args.index("--cmd") + 1 :]
         if cmd[:2] == ["cmd.exe", "/c"] and cmd[2].startswith("del "):
             for path in cmd[2].split()[1:]:
+                if path.startswith("/"):
+                    continue
                 if not path.startswith("/"):
                     host(path).unlink(missing_ok=True)
         elif "-EncodedCommand" in cmd:
