@@ -6,7 +6,8 @@
 #   otherwise  -> remove the task, write C:\autowin-updates.failed
 # Install-FetchwinUpdates.ps1 verifies each package (SHA-256, Microsoft signature), installs the
 # target cumulative update (DISM takes the checkpoints it needs from the same folder), keeps its
-# progress in C:\ProgramData\fetchwin and gives up after a few restarts, so this loop ends. Its log: C:\ProgramData\fetchwin\install-updates.log.
+# progress in C:\ProgramData\fetchwin and gives up after a few restarts, so this loop ends.
+# Its log: C:\ProgramData\fetchwin\install-updates.log.
 param([string]$Dir = 'C:\autowin-updates')
 $ErrorActionPreference = 'Stop'
 $task = 'autowin-updates'
