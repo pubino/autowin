@@ -5,8 +5,9 @@ tool (Microsoft Access, Office automation, installers), testing a Windows build,
 that needs a clean, throwaway Windows machine.
 
 1. Read [`gotchas.md`](gotchas.md) before debugging anything.
-2. The user downloads the Windows 11 Arm64 ISO in a browser (gotcha 1). Ask for it; do not
-   script the download.
+2. Get the Windows 11 Arm64 ISO with [fetchwin](https://github.com/pubino/fetchwin)
+   (`fetchwin fetch --updates download`; it uses Microsoft's public ESD catalog), or ask the
+   user to download it in a browser. Do not script Microsoft's download page (gotcha 1).
 3. Run `examples/zsh/vm-create.sh --dry-run ISO`, then without `--dry-run`. It returns when
    the guest is logged in and `utmctl exec NAME --cmd …` works (20-30 minutes).
 4. Drive the guest with `utmctl exec` and move files with `utmctl file push|pull`.

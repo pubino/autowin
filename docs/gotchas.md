@@ -5,6 +5,8 @@ Each of these cost a debugging session. Most now have a regression test in this 
 1. **Microsoft blocks scripted ISO downloads.** The download page's API
    (`GetProductDownloadLinksBySku`) answers `Sentinel marked this request as rejected`
    to scripted clients. Download the Arm64 ISO in a browser; do not try to get around it.
+   For a scripted download, use [fetchwin](https://github.com/pubino/fetchwin): it builds the ISO from the public ESD
+   catalog that the Media Creation Tool reads, not from this page.
 
 2. **AppleScript cannot attach a disc image to a removable drive.** UTM's
    `make new virtual machine` accepts `source:` on a removable drive but ignores it:

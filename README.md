@@ -3,7 +3,8 @@
 Scripts, guidance and tests for **disposable Windows 11 (Arm64) VMs in
 [UTM](https://mac.getutm.app)** on Apple Silicon. One command goes from a Windows ISO to a
 booted, logged-in VM that the host can drive with `utmctl exec` and `utmctl file`, without
-touching the installer. The companion to [automac](https://github.com/pubino/automac).
+touching the installer. The companion to [automac](https://github.com/pubino/automac);
+[fetchwin](https://github.com/pubino/fetchwin) gets the ISO from the terminal.
 
 ## Layout
 
@@ -32,9 +33,14 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 Requirements: Apple Silicon Mac, UTM 5 (opened once, so it has downloaded its guest tools),
 about 70 GB free.
 
-1. Download the Windows 11 Arm64 ISO in a browser from
-   <https://www.microsoft.com/en-us/software-download/windows11arm64>
-   (*Windows 11 (multi-edition ISO for Arm64)*). Microsoft refuses scripted downloads.
+1. Get a Windows 11 Arm64 ISO, either way:
+   - From the terminal with [fetchwin](https://github.com/pubino/fetchwin):
+     `fetchwin fetch --out ~/Downloads` builds one from Microsoft's public ESD catalog (the
+     one the Media Creation Tool reads), checked against the catalog's hashes. Add `--updates download` for the latest updates (below).
+   - In a browser from
+     <https://www.microsoft.com/en-us/software-download/windows11arm64>
+     (*Windows 11 (multi-edition ISO for Arm64)*). That page refuses scripted downloads
+     (gotcha 1).
 2. Create the VM:
 
    ```zsh
@@ -42,9 +48,9 @@ about 70 GB free.
    examples/zsh/vm-create.sh ~/Downloads/Win11_*_Arm64.iso
    ```
 
-   **Optional, latest updates:** with [fetchwin](https://github.com/pubino/fetchwin),
-   `fetchwin fetch --updates download` builds the ISO from Microsoft's catalog and leaves the
-   latest cumulative update packages in a `.updates` folder beside it. `vm-create.sh` finds
+   **Optional, latest updates:** `fetchwin fetch --updates download` builds the ISO from
+   Microsoft's catalog and leaves the latest cumulative update packages in a `.updates` folder
+   beside it. `vm-create.sh` finds
    that folder by default, puts it on the provisioning disc, and the VM installs it after first
    logon (restarting on its own); `vm-create.sh` returns once it is done. `--updates DIR` names
    another folder, `--no-updates` skips it, `--updates-timeout MIN` (default 120) bounds the wait.
@@ -115,7 +121,7 @@ The repository holds everything needed to rebuild. The VMs and their state do no
 | VMs: disks, snapshots, Windows and Office activation | `~/Library/Containers/com.utmapp.UTM/Data/Documents/NAME.utm` |
 | Per-VM state: password, clone lineage (`clone-of`) | `AUTOWIN_STATE/NAME` (default `~/Library/Application Support/autowin/NAME`) |
 | Your settings | `.env` (gitignored; copy from `example.env`) |
-| The Windows ISO | wherever you saved it; download it again in a browser |
+| The Windows ISO (and fetchwin's `.updates` folder) | wherever you saved it; fetch it again with [fetchwin](https://github.com/pubino/fetchwin) or in a browser |
 
 **Before wiping or replacing the Mac**, do one of these for every VM that holds a Microsoft 365
 license:
@@ -130,9 +136,9 @@ license:
 If the Mac is already gone with a licensed VM on it, sign that device out in the Microsoft
 account's device list; nothing on a new Mac can release it.
 
-**On the new Mac:** install UTM 5 and open it once, clone this repository, recreate `.env` if
-you used one, and either restore the backups to the same paths (then `utmctl list` should show
-the VMs) or run `vm-create.sh` again. For development, also install `uv`, Docker and
+**On the new Mac:** install UTM 5 and open it once, clone this repository (and [fetchwin](https://github.com/pubino/fetchwin) if
+you use it), recreate `.env` if you used one, and either restore the backups to the same paths
+(then `utmctl list` should show the VMs) or run `vm-create.sh` again. For development, also install `uv`, Docker and
 `docker-compose`.
 
 ## Developing this repo
