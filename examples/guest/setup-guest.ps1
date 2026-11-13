@@ -24,6 +24,33 @@ try {
 
     powercfg -H OFF
     net accounts /maxpwage:unlimited | Out-Null
+
+    # Optional: fetchwin's update packages on the disc (vm-create.sh puts them in updates\).
+    # Copied to the local disk (the task runs again after restarts), then installed by the
+    # 'autowin-updates' startup task. A failure here is the updates' failure, not setup's.
+    $updates = Join-Path $root 'updates'
+    if (Test-Path -LiteralPath (Join-Path $updates 'updates.json')) {
+        try {
+            $dest = 'C:\autowin-updates'
+            Remove-Item -Force -ErrorAction SilentlyContinue 'C:\autowin-updates.done', 'C:\autowin-updates.failed'
+            robocopy $updates $dest /E /NFL /NDL /NJH /NJS /NP | Out-Null
+            if ($LASTEXITCODE -ge 8) { throw "copying the updates to $dest failed (robocopy exit $LASTEXITCODE)" }
+            Copy-Item -Force (Join-Path $root 'apply-updates.ps1') $dest
+            $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$dest\apply-updates.ps1`" -Dir `"$dest`""
+            $trigger = New-ScheduledTaskTrigger -AtStartup
+            $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+            $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 4)
+            Register-ScheduledTask -TaskName 'autowin-updates' -Action $action -Trigger $trigger `
+                -Principal $principal -Settings $settings -Force | Out-Null
+            Start-ScheduledTask -TaskName 'autowin-updates'
+            Write-Output 'updates: copied; the autowin-updates task is installing them'
+        }
+        catch {
+            Write-Output "updates failed: $_"
+            Set-Content -Path 'C:\autowin-updates.failed' -Value "$_"
+        }
+    }
     Set-Content -Path 'C:\autowin-setup.done' -Value (Get-Date -Format o)
 }
 catch {

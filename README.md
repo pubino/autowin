@@ -21,7 +21,8 @@ touching the installer. The companion to [automac](https://github.com/pubino/aut
 | [`examples/zsh/monitor.zsh`](examples/zsh/monitor.zsh) | Shared QEMU monitor helpers. |
 | [`examples/tools/ppm2png.py`](examples/tools/ppm2png.py) | Screenshot converter (standard library only). |
 | [`examples/guest/autounattend.xml`](examples/guest/autounattend.xml) | Unattended Windows Setup answer file (based on UTM's). |
-| [`examples/guest/setup-guest.ps1`](examples/guest/setup-guest.ps1) | First-logon script: trust the driver publisher, install UTM guest tools silently. |
+| [`examples/guest/setup-guest.ps1`](examples/guest/setup-guest.ps1) | First-logon script: trust the driver publisher, install UTM guest tools silently; start the optional update install. |
+| [`examples/guest/apply-updates.ps1`](examples/guest/apply-updates.ps1) | Optional: installs [fetchwin](https://github.com/pubino/fetchwin)'s update packages from a startup task, restarting as needed. |
 | [`docs/gotchas.md`](docs/gotchas.md) | Failures already debugged once. Read before debugging. |
 | [`docs/for-agents.md`](docs/for-agents.md) | Entry point for agents pointed at this repository. |
 | [`tests/`](tests/) | Tests that run the scripts against fake `hdiutil`, `uname`, `utmctl`, `osascript` and a fake QEMU monitor: no VM needed. |
@@ -40,6 +41,14 @@ about 70 GB free.
    examples/zsh/vm-create.sh --dry-run ~/Downloads/Win11_*_Arm64.iso
    examples/zsh/vm-create.sh ~/Downloads/Win11_*_Arm64.iso
    ```
+
+   **Optional, latest updates:** with [fetchwin](https://github.com/pubino/fetchwin),
+   `fetchwin fetch --updates download` builds the ISO from Microsoft's catalog and leaves the
+   latest cumulative update packages in a `.updates` folder beside it. `vm-create.sh` finds
+   that folder by default, puts it on the provisioning disc, and the VM installs it after first
+   logon (restarting on its own); `vm-create.sh` returns once it is done. `--updates DIR` names
+   another folder, `--no-updates` skips it, `--updates-timeout MIN` (default 120) bounds the wait.
+   If the updates fail, the VM is still usable; the message says which logs to read.
 
    The first run asks once whether Terminal may control UTM. Installation takes 20-30
    minutes; watch it in the UTM window if you like.

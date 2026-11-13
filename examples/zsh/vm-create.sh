@@ -3,11 +3,17 @@
 # installs the UTM guest tools, so the host can drive it with `utmctl exec` and `utmctl file`.
 #
 # Usage: examples/zsh/vm-create.sh [--dry-run] [--name NAME] [--memory MiB] [--cpus N]
-#                                       [--disk GiB] [--timeout MIN] WINDOWS_ARM64_ISO
+#                                       [--disk GiB] [--timeout MIN] [--updates DIR | --no-updates]
+#                                       [--updates-timeout MIN] WINDOWS_ARM64_ISO
 #
-# The ISO is Microsoft's "Windows 11 (multi-edition ISO for Arm64)". Re-running with the same name
-# does not create a second VM: it waits for the existing one. Local state (password, provisioning
-# disc) is kept in ~/Library/Application Support/autowin/NAME; vm-destroy.sh removes it.
+# The ISO is Microsoft's "Windows 11 (multi-edition ISO for Arm64)" or one built by fetchwin.
+# Re-running with the same name does not create a second VM: it waits for the existing one. Local
+# state (password, provisioning disc) is kept in ~/Library/Application Support/autowin/NAME;
+# vm-destroy.sh removes it.
+#
+# Updates: fetchwin (`--updates download`) leaves the latest update packages in NAME.updates next
+# to NAME.iso. If that folder exists (or --updates names one), it goes on the provisioning disc and
+# the VM installs it after first logon, restarting as needed; this script waits for that too.
 set -euo pipefail
 here=${0:A:h}
 guest=${here:h}/guest
@@ -21,6 +27,7 @@ PLISTBUDDY=${PLISTBUDDY:-/usr/libexec/PlistBuddy}
 VM_USER=${AUTOWIN_USER:-tester}
 
 name=${AUTOWIN_NAME:-autowin} memory=${AUTOWIN_MEMORY:-8192} cpus=${AUTOWIN_CPUS:-4} disk=${AUTOWIN_DISK_GB:-64} timeout=${AUTOWIN_TIMEOUT_MIN:-90} dry=0 iso=""
+updates="" updates_mode=auto updates_timeout=${AUTOWIN_UPDATES_TIMEOUT_MIN:-120}
 die() { print -ru2 -- "vm-create: $*"; exit 1; }  # -r: Windows paths have backslashes
 say() { print -r -- "vm-create: $*"; }
 run() { if (( dry )); then print -- "+ ${(q-)@}"; else "$@"; fi; }
@@ -33,7 +40,10 @@ while (( $# )); do
     --cpus) cpus=${2:?}; shift ;;
     --disk) disk=${2:?}; shift ;;
     --timeout) timeout=${2:?}; shift ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    --updates) updates=${2:?}; updates_mode=explicit; shift ;;
+    --no-updates) updates_mode=off ;;
+    --updates-timeout) updates_timeout=${2:?}; shift ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     -*) die "unknown option: $1" ;;
     *) [[ -z "$iso" ]] || die "only one ISO"; iso=$1 ;;
   esac
@@ -44,11 +54,27 @@ done
 [[ "$(uname -m)" == arm64 ]] || die "needs an Apple silicon Mac"
 [[ -x "$UTMCTL" ]] || die "UTM not found ($UTMCTL)"
 [[ "$name" =~ '^[A-Za-z0-9._-]{1,40}$' ]] || die "--name may use letters, digits, . _ - (max 40)"
-for v in memory cpus disk timeout; do [[ "${(P)v}" =~ '^[0-9]+$' ]] || die "--$v must be a number"; done
+for v in memory cpus disk timeout updates_timeout; do [[ "${(P)v}" =~ '^[0-9]+$' ]] || die "--$v must be a number"; done
 (( memory >= 4096 )) || die "--memory must be at least 4096 MiB"
 (( disk >= 40 )) || die "--disk must be at least 40 GiB"
 [[ -n "$iso" && -f "$iso" ]] || die "Windows ISO not found: ${iso:-(none given)}"
 iso=${iso:A}
+# fetchwin's update folder: NAME.updates beside NAME.iso unless named or turned off.
+case $updates_mode in
+  auto) [[ -d "${iso:r}.updates" ]] && updates=${iso:r}.updates ;;
+  off) updates="" ;;
+  explicit) [[ -d "$updates" ]] || die "--updates: not a directory: $updates" ;;
+esac
+if [[ -n "$updates" ]]; then
+  updates=${updates:A}
+  hint=""; [[ $updates_mode == auto ]] && hint=" (found beside the ISO; --no-updates skips it)"
+  [[ -f "$updates/updates.json" && -f "$updates/Install-FetchwinUpdates.ps1" ]] ||
+    die "$updates is not a fetchwin updates folder (needs updates.json and Install-FetchwinUpdates.ps1)$hint"
+  msus=("$updates"/Windows1[01].0-KB<->-arm64.msu(N))
+  (( $#msus )) || die "$updates has no Arm64 .msu packages$hint"
+  other=("$updates"/*.msu(N)); other=(${other:#*-arm64.msu})
+  (( ! $#other )) || die "$updates has packages for another architecture: ${other:t}$hint"
+fi
 [[ -f "$GUEST_TOOLS" ]] || die "UTM guest tools ISO not found; open UTM once to download it ($GUEST_TOOLS)"
 
 mounts=() staging=""
@@ -87,6 +113,7 @@ if (( ! exists )); then
   run chmod 700 "$STATE_ROOT" "$state"
   if (( dry )); then
     say "dry run: would build $state/provision.iso (guest tools + Autounattend.xml + setup-guest.ps1)"
+    [[ -z "$updates" ]] || say "dry run: would add updates from $updates ($#msus packages) to the disc"
   elif [[ -f "$state/password" ]]; then
     password=$(<"$state/password")
   else
@@ -103,8 +130,17 @@ if (( ! exists )); then
     sed -e "s/@@USER@@/$VM_USER/g" -e "s/@@PASSWORD@@/$password/g" -e "s/@@COMPUTER@@/AUTOWIN-VM/g" \
       "$guest/autounattend.xml" > "$staging/disc/Autounattend.xml"
     cp "$guest/setup-guest.ps1" "$staging/disc/setup-guest.ps1"
+    if [[ -n "$updates" ]]; then
+      say "adding updates from $updates ($#msus packages, $(( $(du -sk "$updates" | cut -f1) / 1048576 )) GB)"
+      cp -c -R "$updates" "$staging/disc/updates" 2>/dev/null || cp -R "$updates" "$staging/disc/updates"
+      cp "$guest/apply-updates.ps1" "$staging/disc/apply-updates.ps1"
+      print -r -- "$updates" > "$state/updates"
+    else
+      rm -f "$state/updates"
+    fi
     rm -f "$state/provision.iso"
-    hdiutil makehybrid -quiet -iso -joliet -default-volume-name AUTOWIN -o "$state/provision.iso" "$staging/disc"
+    # UDF as well: ISO9660/Joliet silently cut files at 4 GiB (a cumulative update is larger).
+    hdiutil makehybrid -quiet -iso -joliet -udf -default-volume-name AUTOWIN -o "$state/provision.iso" "$staging/disc"
   fi
 
   if (( dry )); then
@@ -188,7 +224,11 @@ else
 fi
 
 # --- wait until logged in with guest tools ---------------------------------------------------
-(( dry )) && { say "dry run: would wait up to $timeout min for the guest agent"; exit 0; }
+if (( dry )); then
+  say "dry run: would wait up to $timeout min for the guest agent"
+  [[ -z "$updates" ]] || say "dry run: then up to $updates_timeout min for the updates"
+  exit 0
+fi
 # utmctl exits 0 even when the guest agent is not running (it only prints an error), so its exit
 # code proves nothing. Readiness is positive evidence instead: the marker file that setup-guest.ps1
 # writes, pulled through the agent, holding the timestamp it wrote.
@@ -204,6 +244,21 @@ until probe; do
   if failed; then die "first-logon setup failed; see C:\\autowin-setup.log in the VM"; fi
   sleep 30
 done
+# Updates, if the disc had them: the guest installs them from a startup task, restarting as
+# needed (the agent is unreachable meanwhile, so empty pulls just mean "not yet").
+if [[ -f "$state/updates" ]]; then
+  say "installing updates from $(<"$state/updates"); the VM restarts on its own (up to $updates_timeout min)"
+  deadline=$(( SECONDS + updates_timeout * 60 ))
+  while true; do
+    upd=$(pull 'C:\autowin-updates.done')
+    [[ "$upd" =~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' ]] && break
+    upd_failed=$(pull 'C:\autowin-updates.failed')
+    [[ -z "$upd_failed" ]] || die "updates failed: ${upd_failed//$'\r'/}; the VM is usable. See C:\\autowin-updates.log and C:\\ProgramData\\fetchwin\\install-updates.log"
+    (( SECONDS < deadline )) || die "updates not finished after $updates_timeout min; see C:\\autowin-updates.log in the VM"
+    sleep 30
+  done
+  say "updates installed: ${${upd//$'\r'/}#*$'\n'}"
+fi
 elapsed=$(( SECONDS - begin ))
 say "ready: $name is logged in as $VM_USER and answers utmctl exec (built in $(( elapsed / 60 ))m $(( elapsed % 60 ))s)"
 say "password: $state/password"

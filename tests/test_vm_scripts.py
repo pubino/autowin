@@ -196,7 +196,9 @@ def _waiting_env(tmp_path: Path, pull_output: str) -> tuple[dict[str, str], Path
         f'echo "utmctl $*" >> {log}\n'
         '[ "$1" = status ] && echo "$VM_STATUS" && exit 0\n'
         'if [ "$1" = file ] && [ "$2" = pull ]; then\n'
-        '  case "$*" in *setup.done*) printf "%s" "$PULL_DONE";; esac\n'
+        '  case "$*" in *setup.done*) printf "%s" "$PULL_DONE";;'
+        ' *updates.done*) printf "%s" "${PULL_UPD_DONE:-}";;'
+        ' *updates.failed*) printf "%s" "${PULL_UPD_FAILED:-}";; esac\n'
         "  exit 0\n"
         "fi\n"
         'echo "The QEMU guest agent is not running or not installed on the guest." >&2\n'
@@ -289,3 +291,182 @@ def test_message_helpers_print_raw(script: str) -> None:
         if helper in text:
             line = next(ln for ln in text.splitlines() if ln.startswith(helper))
             assert "print -r" in line or "print -ru2" in line, line
+
+
+# ---------- fetchwin updates ----------
+
+ARM64_MSUS = ("Windows11.0-KB5043080-arm64.msu", "Windows11.0-KB5132061-arm64.msu")
+
+
+def _updates_dir(path: Path, msus: tuple[str, ...] = ARM64_MSUS, installer: bool = True) -> Path:
+    path.mkdir()
+    (path / "updates.json").write_text("{}")
+    if installer:
+        (path / "Install-FetchwinUpdates.ps1").write_text("# fetchwin")
+    for m in msus:
+        (path / m).write_bytes(b"msu")
+    return path
+
+
+def test_create_finds_the_updates_folder_beside_the_iso(tmp_path: Path) -> None:
+    env, _ = _stubs(tmp_path)
+    upd = _updates_dir(tmp_path / "win.updates")
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert f"would add updates from {upd} (2 packages)" in res.stdout
+    assert "then up to 120 min for the updates" in res.stdout
+
+
+def test_create_without_an_updates_folder_mentions_none(tmp_path: Path) -> None:
+    env, _ = _stubs(tmp_path)
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "would add updates" not in res.stdout and "for the updates" not in res.stdout
+
+
+def test_no_updates_skips_the_folder_beside_the_iso(tmp_path: Path) -> None:
+    env, _ = _stubs(tmp_path)
+    _updates_dir(tmp_path / "win.updates")
+    res = _zsh(
+        "vm-create.sh",
+        "--dry-run",
+        "--no-updates",
+        "--name",
+        "t1",
+        str(tmp_path / "win.iso"),
+        env=env,
+    )
+    assert res.returncode == 0, res.stderr
+    assert "would add updates" not in res.stdout and "for the updates" not in res.stdout
+
+
+def test_updates_names_another_folder(tmp_path: Path) -> None:
+    env, _ = _stubs(tmp_path)
+    upd = _updates_dir(tmp_path / "elsewhere", msus=ARM64_MSUS[:1])
+    res = _zsh(
+        "vm-create.sh",
+        "--dry-run",
+        "--updates",
+        str(upd),
+        "--updates-timeout",
+        "30",
+        "--name",
+        "t1",
+        str(tmp_path / "win.iso"),
+        env=env,
+    )
+    assert res.returncode == 0, res.stderr
+    assert f"would add updates from {upd} (1 packages)" in res.stdout
+    assert "then up to 30 min" in res.stdout
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"installer": False}, "is not a fetchwin updates folder"),
+        ({"msus": ()}, "has no Arm64 .msu packages"),
+        (
+            {"msus": (*ARM64_MSUS, "Windows11.0-KB5132061-x64.msu")},
+            "packages for another architecture: Windows11.0-KB5132061-x64.msu",
+        ),
+    ],
+)
+def test_create_refuses_a_bad_updates_folder(
+    tmp_path: Path, kwargs: dict[str, object], message: str
+) -> None:
+    env, log = _stubs(tmp_path)
+    _updates_dir(tmp_path / "win.updates", **kwargs)  # type: ignore[arg-type]
+    res = _zsh("vm-create.sh", "--dry-run", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode != 0
+    assert message in res.stderr
+    assert "--no-updates skips it" in res.stderr  # found automatically: say how to skip it
+    assert not log.exists()  # failed before mounting or calling anything
+
+
+def test_updates_must_be_a_directory(tmp_path: Path) -> None:
+    env, _ = _stubs(tmp_path)
+    res = _zsh(
+        "vm-create.sh",
+        "--dry-run",
+        "--updates",
+        str(tmp_path / "nope"),
+        str(tmp_path / "win.iso"),
+        env=env,
+    )
+    assert res.returncode != 0
+    assert "--updates: not a directory" in res.stderr
+
+
+def _with_updates_state(tmp_path: Path, env: dict[str, str]) -> None:
+    state = Path(env["AUTOWIN_STATE"]) / "t1"
+    state.mkdir(parents=True)
+    (state / "updates").write_text(str(tmp_path / "win.updates"))
+
+
+def test_ready_waits_for_the_updates_the_disc_carried(tmp_path: Path) -> None:
+    env, log = _waiting_env(tmp_path, pull_output="2026-11-10T14:05:31")
+    _with_updates_state(tmp_path, env)
+    env["PULL_UPD_DONE"] = "2026-11-10T15:00:00\r\nbuild=26300.9974"
+    res = _zsh("vm-create.sh", "--timeout", "1", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "updates installed: build=26300.9974" in res.stdout
+    assert res.stdout.index("updates installed") < res.stdout.index("ready: t1")
+    assert "utowin-updates.done" in log.read_text()  # the fake's echo eats "\\a"
+
+
+def test_failed_updates_are_reported_not_ready(tmp_path: Path) -> None:
+    env, _ = _waiting_env(tmp_path, pull_output="2026-11-10T14:05:31")
+    _with_updates_state(tmp_path, env)
+    env["PULL_UPD_FAILED"] = "Install-FetchwinUpdates.ps1 exited 1"
+    res = _zsh("vm-create.sh", "--timeout", "1", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode != 0
+    assert "updates failed: Install-FetchwinUpdates.ps1 exited 1; the VM is usable" in res.stderr
+    assert "ready: " not in res.stdout
+
+
+def test_updates_time_out_instead_of_reporting_ready(tmp_path: Path) -> None:
+    env, _ = _waiting_env(tmp_path, pull_output="2026-11-10T14:05:31")
+    _with_updates_state(tmp_path, env)
+    res = _zsh(
+        "vm-create.sh",
+        "--timeout",
+        "1",
+        "--updates-timeout",
+        "0",
+        "--name",
+        "t1",
+        str(tmp_path / "win.iso"),
+        env=env,
+    )
+    assert res.returncode != 0
+    assert "updates not finished after 0 min" in res.stderr
+
+
+def test_a_vm_built_without_updates_does_not_wait_for_them(tmp_path: Path) -> None:
+    env, log = _waiting_env(tmp_path, pull_output="2026-11-10T14:05:31")
+    res = _zsh("vm-create.sh", "--timeout", "1", "--name", "t1", str(tmp_path / "win.iso"), env=env)
+    assert res.returncode == 0, res.stderr
+    assert "autowin-updates" not in log.read_text()
+
+
+def test_provisioning_disc_is_udf_so_large_updates_survive() -> None:
+    # Regression (measured 2026-11-12): hdiutil makehybrid -iso -joliet silently cut a 4.5 GB
+    # file to 4294967295 bytes; with -udf the guest reads the full file.
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    assert "hdiutil makehybrid -quiet -iso -joliet -udf " in create
+
+
+def test_updates_markers_and_files_agree_between_host_and_guest() -> None:
+    create = (ZSH_DIR / "vm-create.sh").read_text()
+    setup = (GUEST / "setup-guest.ps1").read_text()
+    apply = (GUEST / "apply-updates.ps1").read_text()
+    for marker in ("C:\\autowin-updates.done", "C:\\autowin-updates.failed"):
+        assert f"pull '{marker}'" in create, marker
+        assert f"'{marker}'" in apply, marker
+        assert f"'{marker}'" in setup, marker  # cleared before each install
+    assert 'cp "$guest/apply-updates.ps1" "$staging/disc/apply-updates.ps1"' in create
+    assert '"$staging/disc/updates"' in create
+    assert "Join-Path $root 'updates'" in setup and "Join-Path $root 'apply-updates.ps1'" in setup
+    # The same startup task: registered by setup, removed by apply-updates when finished.
+    assert "-TaskName 'autowin-updates'" in setup and "$task = 'autowin-updates'" in apply
+    assert "Install-FetchwinUpdates.ps1" in apply and "-eq 3010" in apply
