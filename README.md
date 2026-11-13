@@ -49,6 +49,9 @@ about 70 GB free.
    logon (restarting on its own); `vm-create.sh` returns once it is done. `--updates DIR` names
    another folder, `--no-updates` skips it, `--updates-timeout MIN` (default 120) bounds the wait.
    If the updates fail, the VM is still usable; the message says which logs to read.
+   Measured 2026-11-12 (26H2 Arm64, 26300.9711 to 26300.9974, 4 packages, 5 GB): **18m 17s**
+   from ISO to an updated, logged-in VM, of which the updates took about 9 minutes (2.5 min
+   checking the packages, 5 min DISM, one restart).
 
    The first run asks once whether Terminal may control UTM. Installation takes 20-30
    minutes; watch it in the UTM window if you like.
