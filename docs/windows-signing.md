@@ -4,6 +4,8 @@ Use a disposable autowin VM and an Azure Artifact Signing profile approved for t
 
 Read `Azure.CodeSigning.Dlib.runtimeconfig.json` beside the signing library and install its required .NET runtime for the same architecture. For example, Artifact Signing Client 1.0.151 specifies .NET 10. On Windows Arm64, an x64 SignTool uses the x64 runtime, normally installed under `C:\Program Files\dotnet\x64`. Set `DOTNET_ROOT_X64` to that directory in the signing process when needed. A missing runtime can make SignTool exit without a diagnostic. [Windows .NET installation](https://learn.microsoft.com/en-us/dotnet/core/install/windows#arm-based-windows-pcs)
 
+A tested Windows Arm64 configuration used x64 Azure CLI 2.90.0, Windows SDK BuildTools 10.0.28000.2957, Artifact Signing Client 1.0.151, and the x64 .NET 10.0.15 runtime.
+
 ## Sign in through Edge in the guest
 
 On the Mac, sign in to Azure CLI as the approved user and select the signing tenant. Run the helper while the Windows build user is logged in.
@@ -19,7 +21,7 @@ Complete the Microsoft sign-in in the Edge window that opens in the VM. The Powe
 
 Run your project's signing command as the same Windows user. With autowin, run PowerShell using `vm-ps.sh --user builder signing-vm`. Provide the regional Azure endpoint, signing account and certificate profile in the client metadata file. Keep the metadata and the build outputs outside version control.
 
-For an Azure CLI signing session, use the credential selectors supported by your client version. Artifact Signing Client 1.0.151 uses Azure.Identity 1.14, which accepts `AZURE_TOKEN_CREDENTIALS=dev`. Use the client's documented `ExcludeCredentials` values to skip other sign-in methods and leave `AzureCliCredential` enabled. [Credential chains in Azure Identity](https://learn.microsoft.com/en-us/dotnet/azure/sdk/authentication/credential-chains)
+Ensure the signing process can find `az` on its Windows `PATH`. Guest-agent sessions can retain the old machine path after an installation. For an Azure CLI signing session, use the credential selectors supported by your client version. Artifact Signing Client 1.0.151 uses Azure.Identity 1.14, which accepts `AZURE_TOKEN_CREDENTIALS=dev`. Use the client's documented `ExcludeCredentials` values to skip other sign-in methods and leave `AzureCliCredential` enabled. [Credential chains in Azure Identity](https://learn.microsoft.com/en-us/dotnet/azure/sdk/authentication/credential-chains)
 
 ```powershell
 $ErrorActionPreference = 'Stop'
