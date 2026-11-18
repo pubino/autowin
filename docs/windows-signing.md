@@ -19,6 +19,8 @@ Complete the Microsoft sign-in in the Edge window that opens in the VM. The Powe
 
 Run your project's signing command as the same Windows user. With autowin, run PowerShell using `vm-ps.sh --user builder signing-vm`. Provide the regional Azure endpoint, signing account and certificate profile in the client metadata file. Keep the metadata and the build outputs outside version control.
 
+For an Azure CLI signing session, use the credential selectors supported by your client version. Artifact Signing Client 1.0.151 uses Azure.Identity 1.14, which accepts `AZURE_TOKEN_CREDENTIALS=dev`. Use the client's documented `ExcludeCredentials` values to skip other sign-in methods and leave `AzureCliCredential` enabled. [Credential chains in Azure Identity](https://learn.microsoft.com/en-us/dotnet/azure/sdk/authentication/credential-chains)
+
 ```powershell
 $ErrorActionPreference = 'Stop'
 & $env:SIGNTOOL sign /fd SHA256 /tr http://timestamp.acs.microsoft.com /td SHA256 `
@@ -34,5 +36,7 @@ if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
 }
 Get-FileHash -LiteralPath $env:INSTALLER -Algorithm SHA256
 ```
+
+After a timestamp service error, inspect the saved signature before retrying. If Windows reports a valid signature with a timestamp, verify it and continue. If only the timestamp is missing, retry the timestamp operation on that file.
 
 Test the signed installer as a standard user. Verify the publisher and timestamp on the installer, installed executables, and any generated uninstaller. Test updates with the finished signed build. Use `utmctl file pull` to retrieve the artifact and compare its SHA-256 with the value from the guest.
